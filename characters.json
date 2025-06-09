@@ -15,7 +15,8 @@
       "speaker": "Leda"
   },
   "nono": {
-      "speaker": ""
+      "speaker": "Kore",
+      "promptPrefix": "With a low pitched voice:"
   },
   "kura": {
       "speaker": "Sulafat"
@@ -24,75 +25,84 @@
       "speaker": "Umbriel"
   },
   "uke": {
-      "speaker": "m2"
+      "speaker": "Iapetus"
   },
   "shiro": {
-      "speaker": "f2"
+      "speaker": "Kore"
   },
   "kai": {
-      "speaker": "m1"
+      "speaker": "Kore"
   },
   "chi": {
-      "speaker": "f1"
+      "speaker": "Kore"
   },
   "magm": {
-      "speaker": "f3"
+      "speaker": "Aoede"
   },
   "akebi": {
-      "speaker": "f1"
+      "speaker": "Achernar",
+      "promptPrefix": "With a youthful, higher pitched voice:"
   },
   "natsu": {
-      "speaker": "f2"
+      "speaker": "Autonoe"
   },
   "renge": {
-      "speaker": "fc1"
+      "speaker": "Kore",
+      "promptPrefix": "With a young child's voice:"
   },
   "hot": {
-      "speaker": "f1"
+      "speaker": "Laomedeia",
+      "promptPrefix": "With a slightly higher voice:"
   },
   "yagami": {
       "speaker": "Vindemiatrix"
   },
   "oct": {
-      "speaker": "f3"
+      "speaker": "Laomedeia",
+      "promptPrefix": "With a slightly deeper voice:"
   },
   "nene": {
-      "speaker": "f1"
+      "speaker": "Erinome",
+      "promptPrefix": "With a high pitched, almost annoying voice:"
   },
   "aoba": {
-      "speaker": "f1"
+      "speaker": "Achernar",
+      "promptPrefix": "With a youthful, higher pitched voice:"
   },
   "hazu": {
-      "speaker": "f3"
+      "speaker": "Vindemiatrix",
+      "promptPrefix": "With a slightly deep voice:"
   },
   "rin": {
-      "speaker": "f2"
+      "speaker": "Callirrhoe"
   },
   "fur": {
-      "speaker": "f2"
+      "speaker": "Kore",
+      "promptPrefix": "With a lower pitched voice:"
   },
   "haita": {
-      "speaker": "m3"
+      "speaker": "Algenib"
   },
   "fern": {
-      "speaker": "f1"
+      "speaker": "Despina"
   },
   "him": {
-      "speaker": "m1"
+      "speaker": "Umbriel"
   },
   "aro": {
-      "speaker": "f1"
+      "speaker": "Kore"
   },
   "aku": {
-      "speaker": "m3"
+      "speaker": "Puck"
   },
   "rub": {
-      "speaker": "f1"
+      "speaker": "Kore",
+      "promptPrefix": "Cheerful idol voice:"
   },
   "kou": {
-      "speaker": "m1"
+      "speaker": "Sadaltager"
   },
   "kao": {
-      "speaker": "f1"
+      "speaker": "Autonoe"
   }
 }
