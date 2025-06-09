@@ -34,6 +34,8 @@ def main():
                        help='TTS provider (default: gemini)')
     parser.add_argument('--list-decks', action='store_true',
                        help='List all available decks and exit')
+    parser.add_argument('--keep-local-files', action='store_true',
+                       help='Keep local audio files after storing in Anki (default: delete local files)')
     
     args = parser.parse_args()
     
@@ -57,7 +59,8 @@ def main():
             sentence_field=args.sentence_field,
             speaker_field=args.speaker_field,
             emotion_field=args.emotion_field,
-            audio_field=args.audio_field
+            audio_field=args.audio_field,
+            keep_local_files=args.keep_local_files
         )
         
         # List decks if requested
@@ -82,6 +85,7 @@ def main():
         print(f"🎭 Speaker field: {args.speaker_field}")
         print(f"😊 Emotion field: {args.emotion_field}")
         print(f"🔊 Audio field: {args.audio_field}")
+        print(f"💾 Keep local files: {'Yes' if args.keep_local_files else 'No'}")
         
         if args.force:
             print("⚠️ Force mode: Will regenerate ALL audio files")

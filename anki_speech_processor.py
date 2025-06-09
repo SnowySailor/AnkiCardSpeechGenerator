@@ -20,10 +20,11 @@ class AnkiSpeechProcessor:
     def __init__(self, 
                  speech_generator=None,
                  anki_connect_url: str = "http://localhost:8765",
-                 sentence_field: str = "Sentence",
+                 sentence_field: str = "Expression",
                  speaker_field: str = "Speaker",
                  emotion_field: str = "Emotion",
-                 audio_field: str = "Audio"):
+                 audio_field: str = "Audio",
+                 keep_local_files: bool = False):
         """
         Initialize the Anki speech processor.
         
@@ -34,6 +35,7 @@ class AnkiSpeechProcessor:
             speaker_field: Name of the field containing speaker name
             emotion_field: Name of the field containing emotion
             audio_field: Name of the field to store audio filename
+            keep_local_files: Whether to keep local audio files after storing in Anki
         """
         self.speech_generator = speech_generator or create_default_generator()
         self.anki_connect_url = anki_connect_url
@@ -41,6 +43,7 @@ class AnkiSpeechProcessor:
         self.speaker_field = speaker_field
         self.emotion_field = emotion_field
         self.audio_field = audio_field
+        self.keep_local_files = keep_local_files
         
         # Test AnkiConnect connection
         self._test_anki_connect()
@@ -86,6 +89,55 @@ class AnkiSpeechProcessor:
         except requests.RequestException as e:
             raise AnkiConnectError(f"Network error: {e}")
     
+    def _get_card_text(self, card: Dict[str, Any]) -> str:
+        """
+        Extract the text content to be spoken from the Anki card.
+        
+        Args:
+            card: Anki card data
+            
+        Returns:
+            Text content to be converted to speech
+        """
+        fields = card.get('fields', {})
+        sentence = fields.get(self.sentence_field, {}).get('value', '')
+        
+        # Clean HTML from sentence
+        clean_sentence = self.speech_generator._clean_html(sentence)
+        return clean_sentence
+    
+    def _build_emotion_text(self, text: str, speaker_name: str, emotion: str) -> str:
+        """
+        Build text with emotion context by modifying the speaker's prompt prefix.
+        
+        Args:
+            text: The base text to be spoken
+            speaker_name: Name of the speaker character
+            emotion: Emotion context
+            
+        Returns:
+            Text with emotion context applied
+        """
+        if not emotion or not emotion.strip():
+            return text
+        
+        # Get the base prompt from the speaker configuration
+        if speaker_name in self.speech_generator.characters:
+            char_config = self.speech_generator.characters[speaker_name]
+            prompt_prefix = char_config['promptPrefix']
+            
+            # Modify the prompt to include emotion
+            # Replace the colon with emotion context
+            if prompt_prefix.endswith(':'):
+                emotion_prompt = prompt_prefix[:-1] + f" with {emotion}:"
+            else:
+                emotion_prompt = f"{prompt_prefix} with {emotion}:"
+            
+            return f"{emotion_prompt} {text}"
+        else:
+            # No speaker configuration, just add emotion to default
+            return f"Say with {emotion}: {text}"
+    
     def _generate_audio_hash(self, card: Dict[str, Any]) -> str:
         """
         Generate a hash for the audio based on content, speaker data, and provider.
@@ -127,10 +179,10 @@ class AnkiSpeechProcessor:
     
     def _extract_hash_from_filename(self, filename: str) -> Optional[str]:
         """
-        Extract hash from existing audio filename.
+        Extract hash from existing audio filename, handling Anki's [sound:filename.mp3] format.
         
         Args:
-            filename: Audio filename
+            filename: Audio filename (may be in Anki [sound:filename.mp3] format)
             
         Returns:
             Hash string or None if not found
@@ -138,9 +190,15 @@ class AnkiSpeechProcessor:
         if not filename:
             return None
         
+        # Handle Anki's [sound:filename.mp3] format
+        actual_filename = filename
+        if filename.startswith('[sound:') and filename.endswith(']'):
+            # Extract filename from [sound:filename.mp3] format
+            actual_filename = filename[7:-1]  # Remove '[sound:' and ']'
+        
         # Expected format: "speech_{hash}.mp3"
         try:
-            name_without_ext = Path(filename).stem
+            name_without_ext = Path(actual_filename).stem
             if name_without_ext.startswith('speech_'):
                 return name_without_ext.replace('speech_', '')
         except:
@@ -204,19 +262,51 @@ class AnkiSpeechProcessor:
         
         return needs_generation, new_hash
     
+    def _store_audio_in_anki(self, audio_file_path: str, filename: str) -> None:
+        """
+        Store audio file in Anki's media directory using AnkiConnect.
+        
+        Args:
+            audio_file_path: Path to the audio file on disk
+            filename: Desired filename in Anki's media directory
+        """
+        import base64
+        
+        try:
+            # Read the audio file
+            with open(audio_file_path, 'rb') as f:
+                audio_data = f.read()
+            
+            # Encode as base64 for AnkiConnect
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            
+            # Store in Anki's media directory
+            self._anki_request("storeMediaFile", {
+                "filename": filename,
+                "data": audio_base64
+            })
+            
+        except FileNotFoundError:
+            raise RuntimeError(f"Audio file not found: {audio_file_path}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to store audio file in Anki: {e}")
+    
     def _update_card_audio(self, card_id: int, audio_filename: str) -> None:
         """
-        Update a card's audio field with the new filename.
+        Update a card's audio field with the new filename in Anki format.
         
         Args:
             card_id: Anki card ID
-            audio_filename: New audio filename
+            audio_filename: New audio filename (will be formatted as [sound:filename.mp3])
         """
+        # Format filename for Anki audio field
+        anki_audio_field = f"[sound:{audio_filename}]"
+        
         self._anki_request("updateNoteFields", {
             "note": {
                 "id": card_id,
                 "fields": {
-                    self.audio_field: audio_filename
+                    self.audio_field: anki_audio_field
                 }
             }
         })
@@ -267,43 +357,48 @@ class AnkiSpeechProcessor:
                     stats['no_sentence'] += 1
                     continue
                 
-                # Extract card info for display
-                sentence = fields.get(self.sentence_field, {}).get('value', '')[:50] + "..."
-                speaker = fields.get(self.speaker_field, {}).get('value', 'Unknown')
-                emotion = fields.get(self.emotion_field, {}).get('value', 'None')
+                # Extract card info
+                text = self._get_card_text(card)
+                speaker_name = fields.get(self.speaker_field, {}).get('value', 'Narrator')
+                emotion = fields.get(self.emotion_field, {}).get('value', '')
                 
-                print(f"  📝 Sentence: {sentence}")
-                print(f"  🎭 Speaker: {speaker} ({emotion})")
+                # Display info
+                display_text = text[:50] + "..." if len(text) > 50 else text
+                print(f"  📝 Text: {display_text}")
+                print(f"  🎭 Speaker: {speaker_name} ({emotion if emotion else 'No emotion'})")
                 print(f"  🔄 Generating audio...")
                 
-                # Generate audio using the speech generator
-                # Modify the card structure to match what the generator expects
-                generator_card = {
-                    'cardId': card_id,
-                    'fields': {
-                        'Front': fields.get(self.sentence_field, {}),  # Map sentence to Front for generator
-                        'Speaker': fields.get(self.speaker_field, {}),
-                        'Emotion': fields.get(self.emotion_field, {}),
-                        'Audio': fields.get(self.audio_field, {})
-                    }
-                }
+                # Build text with emotion context if provided
+                if emotion and emotion.strip():
+                    final_text = self._build_emotion_text(text, speaker_name, emotion)
+                else:
+                    final_text = text
                 
-                # Generate audio
-                audio_path = self.speech_generator.generate(generator_card)
+                # Generate audio using the simplified API
+                new_filename = f"speech_{new_hash}"
+                audio_path = self.speech_generator.generate(
+                    speaker_name=speaker_name,
+                    text=final_text,
+                    output_filename=new_filename
+                )
                 
-                # Create new filename with hash
-                new_filename = f"speech_{new_hash}.mp3"
-                new_path = self.speech_generator.output_dir / new_filename
-                
-                # Rename the generated file to use hash-based name
-                if Path(audio_path).exists():
-                    Path(audio_path).rename(new_path)
-                    audio_path = str(new_path)
+                # Store audio file in Anki's media directory
+                audio_filename = f"speech_{new_hash}.mp3"
+                self._store_audio_in_anki(audio_path, audio_filename)
                 
                 # Update card in Anki
-                self._update_card_audio(note_id, new_filename)
+                self._update_card_audio(note_id, audio_filename)
                 
-                print(f"  ✅ Generated: {new_filename}")
+                # Clean up local file if configured to do so
+                if not self.keep_local_files:
+                    try:
+                        os.unlink(audio_path)
+                        print(f"  ✅ Generated and stored in Anki: [sound:{audio_filename}]")
+                    except OSError:
+                        print(f"  ✅ Generated and stored in Anki: [sound:{audio_filename}] (local file cleanup failed)")
+                else:
+                    print(f"  ✅ Generated and stored in Anki: [sound:{audio_filename}] (local copy kept: {audio_path})")
+                
                 stats['processed'] += 1
                 
             except Exception as e:
@@ -366,6 +461,6 @@ class AnkiSpeechProcessor:
             sentence = fields.get(self.sentence_field, {}).get('value', '')
             if sentence:
                 hash_val = self._generate_audio_hash(card)
-                print(f"  → Would generate: speech_{hash_val}.mp3")
+                print(f"  → Would generate: [sound:speech_{hash_val}.mp3]")
             else:
                 print(f"  → No '{self.sentence_field}' field found!") 

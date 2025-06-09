@@ -13,7 +13,7 @@ from pydub.utils import which
 
 class SpeechGenerator(ABC):
     """
-    Abstract base class for generating speech audio from Anki cards.
+    Abstract base class for generating speech audio from text.
     """
     
     def __init__(self, 
@@ -52,34 +52,6 @@ class SpeechGenerator(ABC):
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in characters file: {e}")
     
-    def _get_audio_content(self, card: Dict[str, Any]) -> str:
-        """
-        Extract the text content to be spoken from the Anki card.
-        
-        Args:
-            card: Anki card data as returned by ankiconnect API
-            
-        Returns:
-            Text content to be converted to speech
-        """
-        # Look for common text fields in Anki cards
-        fields = card.get('fields', {})
-        
-        # Try common field names for content
-        content_fields = ['Front', 'Back', 'Question', 'Answer', 'Text', 'Content']
-        
-        for field_name in content_fields:
-            if field_name in fields and fields[field_name].get('value'):
-                return fields[field_name]['value']
-        
-        # If no standard fields found, concatenate all non-empty fields except Audio
-        content_parts = []
-        for field_name, field_data in fields.items():
-            if field_name not in ['Audio', 'Speaker', 'Emotion'] and field_data.get('value'):
-                content_parts.append(field_data['value'])
-        
-        return ' '.join(content_parts) if content_parts else "No content found"
-    
     def _clean_html(self, text: str) -> str:
         """Remove HTML tags from text."""
         import re
@@ -111,54 +83,75 @@ class SpeechGenerator(ABC):
             os.unlink(temp_wav_path)
     
     @abstractmethod
-    def _generate_audio_data(self, text: str, speaker_name: str, emotion: str = "") -> bytes:
+    def _generate_audio_data(self, text: str, speaker_name: str) -> bytes:
         """
         Generate audio data from text. Must be implemented by subclasses.
         
         Args:
-            text: The text to be spoken
+            text: The complete text to be spoken (including any prompt prefixes)
             speaker_name: Name of the speaker character
-            emotion: Emotion context for the speech
             
         Returns:
             WAV audio data as bytes
         """
         pass
     
-    def generate(self, card: Dict[str, Any]) -> str:
+    def generate(self, speaker_name: str, text: str, output_filename: Optional[str] = None) -> str:
         """
-        Generate speech audio for an Anki card.
+        Generate speech audio from text using the specified speaker.
         
         Args:
-            card: Anki card data as returned by ankiconnect API
+            speaker_name: Name of the speaker character
+            text: Text to be converted to speech
+            output_filename: Optional custom filename (without extension). If None, generates based on hash.
             
         Returns:
             Path to the generated MP3 audio file
         """
-        # Extract card information
-        fields = card.get('fields', {})
-        speaker_name = fields.get('Speaker', {}).get('value', 'Narrator')
-        emotion = fields.get('Emotion', {}).get('value', '')
-        
-        # Get text content to speak
-        text_content = self._get_audio_content(card)
-        clean_text = self._clean_html(text_content)
+        # Clean HTML from text
+        clean_text = self._clean_html(text)
         
         if not clean_text.strip():
-            raise ValueError("No text content found in card to generate speech")
+            raise ValueError("No text content provided to generate speech")
+        
+        # Get speaker configuration and build full prompt
+        full_prompt = self._build_speech_prompt(clean_text, speaker_name)
         
         # Generate audio data using the specific implementation
-        wav_bytes = self._generate_audio_data(clean_text, speaker_name, emotion)
+        wav_bytes = self._generate_audio_data(full_prompt, speaker_name)
         
-        # Generate output filename
-        card_id = card.get('cardId', 'unknown')
-        output_filename = f"card_{card_id}_{speaker_name.replace(' ', '_')}.mp3"
-        output_path = self.output_dir / output_filename
+        # Generate output filename if not provided
+        if output_filename is None:
+            # Create a simple hash-based filename
+            import hashlib
+            text_hash = hashlib.sha256(f"{speaker_name}_{clean_text}".encode()).hexdigest()[:8]
+            output_filename = f"speech_{text_hash}"
+        
+        output_path = self.output_dir / f"{output_filename}.mp3"
         
         # Convert to MP3 and save
         self._convert_to_mp3(wav_bytes, output_path)
         
         return str(output_path)
+    
+    def _build_speech_prompt(self, text: str, speaker_name: str) -> str:
+        """
+        Build the complete speech prompt including character-specific prefixes.
+        
+        Args:
+            text: The base text to be spoken
+            speaker_name: Name of the speaker character
+            
+        Returns:
+            Complete prompt for speech generation
+        """
+        if speaker_name not in self.characters:
+            # Use default if character not found
+            return f"Say: {text}"
+        else:
+            char_config = self.characters[speaker_name]
+            prompt_prefix = char_config['promptPrefix']
+            return f"{prompt_prefix} {text}"
     
     def set_compression(self, bitrate: str) -> None:
         """
@@ -218,48 +211,17 @@ class GeminiSpeechGenerator(SpeechGenerator):
         # Initialize Gemini client
         self.client = genai.Client(api_key=self.api_key)
     
-    def _generate_speech_content(self, text: str, speaker_name: str, emotion: str = "") -> str:
-        """
-        Generate the full prompt for speech generation.
-        
-        Args:
-            text: The text to be spoken
-            speaker_name: Name of the speaker character
-            emotion: Emotion context for the speech
-            
-        Returns:
-            Complete prompt for speech generation
-        """
-        if speaker_name not in self.characters:
-            # Use default if character not found
-            prompt_prefix = f"Say"
-            if emotion:
-                prompt_prefix += f" {emotion}:"
-            else:
-                prompt_prefix += ":"
-        else:
-            char_config = self.characters[speaker_name]
-            prompt_prefix = char_config['promptPrefix']
-            if emotion:
-                prompt_prefix = prompt_prefix.replace(":", f" with {emotion}:")
-        
-        return f"{prompt_prefix} {text}"
-    
-    def _generate_audio_data(self, text: str, speaker_name: str, emotion: str = "") -> bytes:
+    def _generate_audio_data(self, text: str, speaker_name: str) -> bytes:
         """
         Generate audio data using Gemini's TTS API.
         
         Args:
-            text: The text to be spoken
+            text: The complete text to be spoken (including prompt prefixes)
             speaker_name: Name of the speaker character
-            emotion: Emotion context for the speech
             
         Returns:
             WAV audio data as bytes
         """
-        # Generate speech prompt
-        speech_prompt = self._generate_speech_content(text, speaker_name, emotion)
-        
         # Get voice configuration
         if speaker_name in self.characters:
             voice_name = self.characters[speaker_name]['speaker']
@@ -270,7 +232,7 @@ class GeminiSpeechGenerator(SpeechGenerator):
         try:
             response = self.client.models.generate_content(
                 model="gemini-2.5-flash-preview-tts",
-                contents=speech_prompt,
+                contents=text,
                 config=types.GenerateContentConfig(
                     response_modalities=["AUDIO"],
                     speech_config=types.SpeechConfig(
