@@ -1,17 +1,98 @@
 {
-  "mag": {
-    "speaker": "Kore"
-  },
-  "haya": {
-    "speaker": "Puck"
-  },
-  "gan": {
+  "m1": {
     "speaker": "Charon"
   },
+  "mag": {
+      "speaker": "Kore"
+  },
+  "haya": {
+      "speaker": "Aoede"
+  },
+  "gan": {
+      "speaker": "Rasalgethi"
+  },
   "kani": {
-    "speaker": "Orus"
+      "speaker": "Leda"
   },
   "nono": {
-    "speaker": "Leda"
+      "speaker": ""
+  },
+  "kura": {
+      "speaker": "Sulafat"
+  },
+  "hai": {
+      "speaker": "Umbriel"
+  },
+  "uke": {
+      "speaker": "m2"
+  },
+  "shiro": {
+      "speaker": "f2"
+  },
+  "kai": {
+      "speaker": "m1"
+  },
+  "chi": {
+      "speaker": "f1"
+  },
+  "magm": {
+      "speaker": "f3"
+  },
+  "akebi": {
+      "speaker": "f1"
+  },
+  "natsu": {
+      "speaker": "f2"
+  },
+  "renge": {
+      "speaker": "fc1"
+  },
+  "hot": {
+      "speaker": "f1"
+  },
+  "yagami": {
+      "speaker": "Vindemiatrix"
+  },
+  "oct": {
+      "speaker": "f3"
+  },
+  "nene": {
+      "speaker": "f1"
+  },
+  "aoba": {
+      "speaker": "f1"
+  },
+  "hazu": {
+      "speaker": "f3"
+  },
+  "rin": {
+      "speaker": "f2"
+  },
+  "fur": {
+      "speaker": "f2"
+  },
+  "haita": {
+      "speaker": "m3"
+  },
+  "fern": {
+      "speaker": "f1"
+  },
+  "him": {
+      "speaker": "m1"
+  },
+  "aro": {
+      "speaker": "f1"
+  },
+  "aku": {
+      "speaker": "m3"
+  },
+  "rub": {
+      "speaker": "f1"
+  },
+  "kou": {
+      "speaker": "m1"
+  },
+  "kao": {
+      "speaker": "f1"
   }
 }
