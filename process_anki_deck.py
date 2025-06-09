@@ -18,8 +18,8 @@ def main():
                        help='Preview cards without generating audio')
     parser.add_argument('--force', action='store_true',
                        help='Force regenerate all audio files')
-    parser.add_argument('--sentence-field', default='Sentence',
-                       help='Name of field containing text to speak (default: Sentence)')
+    parser.add_argument('--sentence-field', default='Expression',
+                       help='Name of field containing text to speak (default: Expression)')
     parser.add_argument('--speaker-field', default='Speaker',
                        help='Name of field containing speaker name (default: Speaker)')
     parser.add_argument('--emotion-field', default='Emotion',
