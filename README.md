@@ -1,6 +1,6 @@
 # Anki Card Speech Generator
 
-A Python tool that generates high-quality audio for Anki flashcards using Google's Gemini AI text-to-speech capabilities. This tool supports multiple character voices, emotions, and configurable MP3 compression.
+A Python tool that generates high-quality audio for Anki flashcards using multiple text-to-speech providers. Currently supports Google's Gemini AI with an extensible architecture for additional providers.
 
 ## Features
 
@@ -10,6 +10,15 @@ A Python tool that generates high-quality audio for Anki flashcards using Google
 - **Anki Integration**: Works with Anki card data from ankiconnect API
 - **Character Management**: Easy addition of new voice characters
 - **HTML Cleaning**: Automatically removes HTML tags from card content
+- **Extensible Architecture**: Abstract base class for easy provider integration
+
+## Architecture
+
+The tool uses an abstract base class `SpeechGenerator` with provider-specific implementations:
+
+- **`SpeechGenerator`** (Abstract Base Class): Defines the common interface
+- **`GeminiSpeechGenerator`**: Implementation using Google's Gemini AI TTS
+- **Future providers**: Can be easily added by extending the base class
 
 ## Installation
 
@@ -30,11 +39,13 @@ A Python tool that generates high-quality audio for Anki flashcards using Google
 
 ## Quick Start
 
-```python
-from speech_generator import SpeechGenerator
+### Method 1: Direct Class Usage
 
-# Initialize the generator
-generator = SpeechGenerator(
+```python
+from speech_generator import GeminiSpeechGenerator
+
+# Initialize the Gemini generator directly
+generator = GeminiSpeechGenerator(
     characters_file="characters.json",
     output_dir="audio_output",
     mp3_bitrate="128k"
@@ -55,6 +66,37 @@ card = {
 # Generate audio
 audio_path = generator.generate(card)
 print(f"Audio saved to: {audio_path}")
+```
+
+### Method 2: Factory Function
+
+```python
+from speech_generator import create_speech_generator
+
+# Create using factory function
+generator = create_speech_generator(
+    provider="gemini",
+    characters_file="characters.json",
+    output_dir="audio_output",
+    mp3_bitrate="128k"
+)
+
+audio_path = generator.generate(card)
+```
+
+### Method 3: Default Generator
+
+```python
+from speech_generator import create_default_generator
+
+# Create default generator (currently Gemini)
+generator = create_default_generator(
+    characters_file="characters.json",
+    output_dir="audio_output",
+    mp3_bitrate="128k"
+)
+
+audio_path = generator.generate(card)
 ```
 
 ## Character Configuration
@@ -126,11 +168,42 @@ Run the example script to see the tool in action:
 python example_usage.py
 ```
 
-This will:
-1. Generate audio for sample cards
-2. Demonstrate compression adjustment
-3. Add a new character
-4. Show error handling
+This will demonstrate:
+1. Different initialization methods
+2. Audio generation for sample cards
+3. Compression adjustment
+4. Character management
+5. Error handling
+
+## Supported Providers
+
+### Current Providers
+
+- **Gemini** (`gemini`): Google's Gemini AI TTS
+  - 30 different voices
+  - 24 language support
+  - High-quality natural speech
+
+### Adding New Providers
+
+To add a new TTS provider, extend the `SpeechGenerator` abstract class:
+
+```python
+from speech_generator import SpeechGenerator
+
+class CustomTTSGenerator(SpeechGenerator):
+    def __init__(self, api_key, **kwargs):
+        super().__init__(**kwargs)
+        self.api_key = api_key
+        # Initialize your TTS client here
+    
+    def _generate_audio_data(self, text: str, speaker_name: str, emotion: str = "") -> bytes:
+        # Implement your TTS provider logic here
+        # Return WAV audio data as bytes
+        pass
+```
+
+Then update the factory function to include your provider.
 
 ## Supported Languages
 
@@ -146,8 +219,10 @@ Gemini TTS supports 24 languages including:
 ### Core Methods
 
 ```python
-# Initialize
-generator = SpeechGenerator(api_key="your-key", mp3_bitrate="128k")
+# Initialize (multiple options)
+generator = GeminiSpeechGenerator(api_key="your-key")
+generator = create_speech_generator("gemini", api_key="your-key")
+generator = create_default_generator(api_key="your-key")
 
 # Generate audio for a card
 audio_path = generator.generate(anki_card_dict)
@@ -176,11 +251,15 @@ To use with your Anki collection:
 
 1. Install [ankiconnect](https://github.com/FooSoft/anki-connect) addon
 2. Query cards using ankiconnect API
-3. Pass card data to `SpeechGenerator.generate()`
+3. Pass card data to `generator.generate()`
 4. Update card's Audio field with returned path
 
 ```python
 import requests
+from speech_generator import create_default_generator
+
+# Initialize generator
+generator = create_default_generator()
 
 # Query Anki cards via ankiconnect
 response = requests.post('http://localhost:8765', json={
@@ -221,6 +300,10 @@ for card in cards:
    - Add character to `characters.json`
    - Or use existing character names
 
+5. **"Unsupported TTS provider"**:
+   - Currently only "gemini" is supported
+   - Check provider name spelling
+
 ### File Permissions
 
 Ensure the output directory is writable:
@@ -239,6 +322,16 @@ This project uses Google's Gemini AI service. Please review [Google's Terms of S
 3. Make your changes
 4. Test with example cards
 5. Submit a pull request
+
+### Adding New TTS Providers
+
+We welcome contributions for additional TTS providers! Follow the abstract class pattern:
+
+1. Extend `SpeechGenerator` abstract class
+2. Implement `_generate_audio_data()` method
+3. Add provider to factory function
+4. Update documentation
+5. Add tests and examples
 
 ## Support
 

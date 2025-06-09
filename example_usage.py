@@ -5,7 +5,7 @@ This script demonstrates how to generate audio for Anki cards using Google's Gem
 """
 
 import os
-from speech_generator import SpeechGenerator
+from speech_generator import GeminiSpeechGenerator, create_speech_generator, create_default_generator
 
 def main():
     # Example Anki card data (as returned by ankiconnect API)
@@ -49,43 +49,55 @@ def main():
         return
     
     try:
-        # Initialize the speech generator
-        print("Initializing SpeechGenerator...")
-        generator = SpeechGenerator(
+        # Demo 1: Initialize using the direct class constructor
+        print("=== Demo 1: Direct GeminiSpeechGenerator ===")
+        generator = GeminiSpeechGenerator(
             characters_file="characters.json",
             output_dir="audio_output",
             mp3_bitrate="128k"  # Adjustable compression
         )
         
-        # Generate audio for each sample card
-        for i, card in enumerate(sample_cards, 1):
-            print(f"\nProcessing card {i}/{len(sample_cards)}...")
-            print(f"Card ID: {card['cardId']}")
-            
-            # Extract some info for display
-            fields = card['fields']
-            speaker = fields.get('Speaker', {}).get('value', 'Unknown')
-            emotion = fields.get('Emotion', {}).get('value', 'None')
-            
-            print(f"Speaker: {speaker}")
-            print(f"Emotion: {emotion}")
-            
-            try:
-                # Generate the audio
-                audio_path = generator.generate(card)
-                print(f"✓ Audio generated successfully: {audio_path}")
-                
-                # Update the card's Audio field with the path (in a real scenario)
-                card['fields']['Audio']['value'] = audio_path
-                
-            except Exception as e:
-                print(f"✗ Error generating audio: {e}")
+        # Generate audio for the first card
+        card = sample_cards[0]
+        print(f"Processing card {card['cardId']} with GeminiSpeechGenerator...")
+        audio_path = generator.generate(card)
+        print(f"✓ Audio generated: {audio_path}")
+        
+        # Demo 2: Initialize using the factory function
+        print(f"\n=== Demo 2: Factory Function ===")
+        generator2 = create_speech_generator(
+            provider="gemini",
+            characters_file="characters.json",
+            output_dir="audio_output",
+            mp3_bitrate="128k"
+        )
+        
+        # Generate audio for the second card
+        card = sample_cards[1]
+        print(f"Processing card {card['cardId']} with factory function...")
+        audio_path = generator2.generate(card)
+        print(f"✓ Audio generated: {audio_path}")
+        
+        # Demo 3: Initialize using the default generator
+        print(f"\n=== Demo 3: Default Generator ===")
+        generator3 = create_default_generator(
+            characters_file="characters.json",
+            output_dir="audio_output",
+            mp3_bitrate="128k"
+        )
+        
+        # Generate audio for the third card
+        card = sample_cards[2]
+        print(f"Processing card {card['cardId']} with default generator...")
+        audio_path = generator3.generate(card)
+        print(f"✓ Audio generated: {audio_path}")
         
         print(f"\n🎉 Audio generation complete!")
         print(f"Check the 'audio_output' directory for generated MP3 files.")
         
         # Demonstrate compression adjustment
-        print(f"\nChanging compression to high quality (192k)...")
+        print(f"\n=== Compression Demo ===")
+        print(f"Changing compression to high quality (192k)...")
         generator.set_compression("192k")
         
         # Generate one more sample with higher quality
@@ -106,7 +118,8 @@ def main():
             print(f"✗ Error generating high-quality audio: {e}")
         
         # Demonstrate adding a new character
-        print(f"\nAdding a new character 'Storyteller'...")
+        print(f"\n=== Character Management Demo ===")
+        print(f"Adding a new character 'Storyteller'...")
         generator.add_character(
             name="Storyteller",
             speaker="Schedar",  # One of Gemini's available voices
@@ -128,6 +141,12 @@ def main():
             print(f"✓ Storyteller audio generated: {story_audio_path}")
         except Exception as e:
             print(f"✗ Error generating storyteller audio: {e}")
+        
+        # Show available providers
+        print(f"\n=== Available Providers ===")
+        print("Currently supported TTS providers:")
+        print("- gemini (Google Gemini AI)")
+        print("- Future providers can be added by extending the SpeechGenerator abstract class")
         
     except Exception as e:
         print(f"Error initializing SpeechGenerator: {e}")
