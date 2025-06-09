@@ -1,4 +1,12 @@
 {
+  "m3": {
+    "speaker": "Umbriel",
+    "promptPrefix": "With a low pitched voice:"
+  },
+  "m2": {
+    "speaker": "Rasalgethi",
+    "promptPrefix": "With a low pitched voice:"
+  },
   "m1": {
     "speaker": "Charon"
   },

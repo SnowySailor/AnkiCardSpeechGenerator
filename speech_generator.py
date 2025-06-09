@@ -10,6 +10,7 @@ from google import genai
 from google.genai import types
 from pydub import AudioSegment
 from pydub.utils import which
+from bs4 import BeautifulSoup
 
 class SpeechGenerator(ABC):
     """
@@ -53,13 +54,9 @@ class SpeechGenerator(ABC):
             raise ValueError(f"Invalid JSON in characters file: {e}")
     
     def _clean_html(self, text: str) -> str:
-        """Remove HTML tags from text."""
-        import re
-        # Simple HTML tag removal
-        clean_text = re.sub(r'<[^>]+>', '', text)
-        # Clean up extra whitespace
-        clean_text = ' '.join(clean_text.split())
-        return clean_text
+        soup = BeautifulSoup(text, features="html.parser")
+        stripped_text = soup.get_text()
+        return stripped_text
     
     def wave_file(self, filename, pcm, channels=1, rate=24000, sample_width=2):
         with wave.open(filename, "wb") as wf:
@@ -135,7 +132,6 @@ class SpeechGenerator(ABC):
             output_filename = f"speech_{text_hash}"
         
         output_path = self.output_dir / f"{output_filename}.mp3"
-        print('here')
         # Convert to MP3 and save
         self._convert_to_mp3(wav_bytes, output_path)
         
@@ -157,8 +153,8 @@ class SpeechGenerator(ABC):
             return f"Say: {text}"
         else:
             char_config = self.characters[speaker_name]
-            prompt_prefix = char_config['promptPrefix']
-            return f"{prompt_prefix} {text}"
+            prompt_prefix = char_config['promptPrefix'] if 'promptPrefix' in char_config else ''
+            return f"{prompt_prefix} {text}".strip()
     
     def set_compression(self, bitrate: str) -> None:
         """
@@ -234,6 +230,8 @@ class GeminiSpeechGenerator(SpeechGenerator):
             voice_name = self.characters[speaker_name]['speaker']
         else:
             voice_name = 'Charon'  # Default voice
+
+        print(f"    Final prompt: {text}")
         
         # Generate speech using Gemini
         try:
