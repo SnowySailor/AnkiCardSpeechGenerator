@@ -1,6 +1,7 @@
+import time
 import os
 import json
-import base64
+import wave
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -9,7 +10,6 @@ from google import genai
 from google.genai import types
 from pydub import AudioSegment
 from pydub.utils import which
-
 
 class SpeechGenerator(ABC):
     """
@@ -61,6 +61,13 @@ class SpeechGenerator(ABC):
         clean_text = ' '.join(clean_text.split())
         return clean_text
     
+    def wave_file(self, filename, pcm, channels=1, rate=24000, sample_width=2):
+        with wave.open(filename, "wb") as wf:
+            wf.setnchannels(channels)
+            wf.setsampwidth(sample_width)
+            wf.setframerate(rate)
+            wf.writeframes(pcm)
+
     def _convert_to_mp3(self, wav_data: bytes, output_path: Path) -> None:
         """
         Convert WAV audio data to MP3 and save to file.
@@ -71,9 +78,9 @@ class SpeechGenerator(ABC):
         """
         # Create temporary WAV file
         with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
-            temp_wav.write(wav_data)
+            self.wave_file(temp_wav.name, wav_data)
             temp_wav_path = temp_wav.name
-        
+
         try:
             # Load WAV and convert to MP3
             audio = AudioSegment.from_wav(temp_wav_path)
@@ -95,7 +102,7 @@ class SpeechGenerator(ABC):
             WAV audio data as bytes
         """
         pass
-    
+
     def generate(self, speaker_name: str, text: str, output_filename: Optional[str] = None) -> str:
         """
         Generate speech audio from text using the specified speaker.
@@ -128,7 +135,7 @@ class SpeechGenerator(ABC):
             output_filename = f"speech_{text_hash}"
         
         output_path = self.output_dir / f"{output_filename}.mp3"
-        
+        print('here')
         # Convert to MP3 and save
         self._convert_to_mp3(wav_bytes, output_path)
         
@@ -244,12 +251,8 @@ class GeminiSpeechGenerator(SpeechGenerator):
                     ),
                 )
             )
-            
             # Extract audio data
-            audio_data = response.candidates[0].content.parts[0].inline_data.data
-            wav_bytes = base64.b64decode(audio_data)
-            
-            return wav_bytes
+            return response.candidates[0].content.parts[0].inline_data.data
             
         except Exception as e:
             raise RuntimeError(f"Failed to generate speech with Gemini: {e}")
