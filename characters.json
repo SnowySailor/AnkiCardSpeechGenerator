@@ -1,0 +1,22 @@
+{
+  "Dr. Anya": {
+    "speaker": "Kore",
+    "promptPrefix": "As Dr. Anya, speak with scientific authority and enthusiasm:"
+  },
+  "Liam": {
+    "speaker": "Puck",
+    "promptPrefix": "As Liam, speak with casual energy and curiosity:"
+  },
+  "Narrator": {
+    "speaker": "Charon",
+    "promptPrefix": "As a knowledgeable narrator, speak clearly and informatively:"
+  },
+  "Teacher": {
+    "speaker": "Orus",
+    "promptPrefix": "As a patient teacher, explain concepts clearly and firmly:"
+  },
+  "Student": {
+    "speaker": "Leda",
+    "promptPrefix": "As an eager student, speak with youthful curiosity:"
+  }
+} 
