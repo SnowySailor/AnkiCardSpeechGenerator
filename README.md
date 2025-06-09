@@ -1,13 +1,14 @@
 # Anki Card Speech Generator
 
-A Python tool that generates high-quality audio for Anki flashcards using multiple text-to-speech providers. Currently supports Google's Gemini AI with an extensible architecture for additional providers.
+A Python tool that generates high-quality audio for Anki flashcards using multiple text-to-speech providers. Features full AnkiConnect integration for automated deck processing with intelligent hash-based audio management.
 
 ## Features
 
+- **AnkiConnect Integration**: Automatically process entire Anki decks
+- **Hash-Based Audio Management**: Only regenerate audio when content changes
 - **Multiple Voice Characters**: Configure different speakers with unique voice characteristics
 - **Emotion Support**: Apply emotional context to speech generation
 - **MP3 Compression**: Adjustable bitrate for file size optimization
-- **Anki Integration**: Works with Anki card data from ankiconnect API
 - **Character Management**: Easy addition of new voice characters
 - **HTML Cleaning**: Automatically removes HTML tags from card content
 - **Extensible Architecture**: Abstract base class for easy provider integration
@@ -18,6 +19,7 @@ The tool uses an abstract base class `SpeechGenerator` with provider-specific im
 
 - **`SpeechGenerator`** (Abstract Base Class): Defines the common interface
 - **`GeminiSpeechGenerator`**: Implementation using Google's Gemini AI TTS
+- **`AnkiSpeechProcessor`**: Handles AnkiConnect integration and deck processing
 - **Future providers**: Can be easily added by extending the base class
 
 ## Installation
@@ -32,72 +34,93 @@ The tool uses an abstract base class `SpeechGenerator` with provider-specific im
    - **Ubuntu/Debian**: `sudo apt install ffmpeg`
    - **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html)
 
-3. **Get Gemini API Key**:
+3. **Install AnkiConnect Addon**:
+   - Open Anki
+   - Go to Tools → Add-ons → Get Add-ons
+   - Enter code: `2055492159`
+   - Restart Anki
+
+4. **Get Gemini API Key**:
    - Visit [Google AI Studio](https://ai.google.dev/)
    - Generate an API key
    - Set environment variable: `export GEMINI_API_KEY="your-api-key-here"`
 
 ## Quick Start
 
-### Method 1: Direct Class Usage
+### Method 1: Interactive Mode (Recommended)
 
-```python
-from speech_generator import GeminiSpeechGenerator
-
-# Initialize the Gemini generator directly
-generator = GeminiSpeechGenerator(
-    characters_file="characters.json",
-    output_dir="audio_output",
-    mp3_bitrate="128k"
-)
-
-# Example Anki card data
-card = {
-    "cardId": 1001,
-    "fields": {
-        "Front": {"value": "What is the capital of France?"},
-        "Back": {"value": "Paris is the capital of France."},
-        "Speaker": {"value": "Teacher"},
-        "Emotion": {"value": "confident"},
-        "Audio": {"value": ""}
-    }
-}
-
-# Generate audio
-audio_path = generator.generate(card)
-print(f"Audio saved to: {audio_path}")
+```bash
+python process_anki_deck.py
 ```
 
-### Method 2: Factory Function
+This launches an interactive interface that will:
+1. List all available decks
+2. Let you select a deck
+3. Preview the cards and field mapping
+4. Process the deck with smart hash-based updates
 
-```python
-from speech_generator import create_speech_generator
+### Method 2: Command Line
 
-# Create using factory function
-generator = create_speech_generator(
-    provider="gemini",
-    characters_file="characters.json",
-    output_dir="audio_output",
-    mp3_bitrate="128k"
-)
+```bash
+# List available decks
+python process_anki_deck.py --list-decks
 
-audio_path = generator.generate(card)
+# Preview a deck without processing
+python process_anki_deck.py "My Japanese Deck" --preview
+
+# Process a deck
+python process_anki_deck.py "My Japanese Deck"
+
+# Force regenerate all audio
+python process_anki_deck.py "My Japanese Deck" --force
+
+# Custom field mapping
+python process_anki_deck.py "My Deck" \
+  --sentence-field "Text" \
+  --speaker-field "Character" \
+  --emotion-field "Mood"
 ```
 
-### Method 3: Default Generator
+### Method 3: Programmatic Usage
 
 ```python
+from anki_speech_processor import AnkiSpeechProcessor
 from speech_generator import create_default_generator
 
-# Create default generator (currently Gemini)
-generator = create_default_generator(
-    characters_file="characters.json",
-    output_dir="audio_output",
-    mp3_bitrate="128k"
+# Create processor
+processor = AnkiSpeechProcessor(
+    speech_generator=create_default_generator(mp3_bitrate="192k"),
+    sentence_field="Sentence",
+    speaker_field="Speaker",
+    emotion_field="Emotion",
+    audio_field="Audio"
 )
 
-audio_path = generator.generate(card)
+# Process a deck
+stats = processor.process_deck("My Japanese Deck")
+processor.print_statistics(stats)
 ```
+
+## Hash-Based Audio Management
+
+The system uses intelligent hashing to determine when audio needs regeneration:
+
+### Hash Components
+- **Sentence content** (HTML-cleaned)
+- **Speaker configuration** (voice, prompt prefix)
+- **Emotion setting**
+- **TTS provider** and settings
+- **Audio bitrate**
+
+### File Naming
+Audio files are named using the format: `speech_{hash}.mp3`
+
+Example: `speech_a1b2c3d4e5f6g7h8.mp3`
+
+### Smart Updates
+- ✅ **Regenerate**: When text, speaker, emotion, or settings change
+- ⏭️ **Skip**: When hash matches existing audio file
+- 🔄 **Force mode**: Regenerate all audio regardless of hash
 
 ## Character Configuration
 
@@ -109,16 +132,18 @@ The `characters.json` file defines voice characteristics for different speakers:
     "speaker": "Orus",
     "promptPrefix": "As a patient teacher, explain concepts clearly and firmly:"
   },
-  "Dr. Anya": {
-    "speaker": "Kore",
-    "promptPrefix": "As Dr. Anya, speak with scientific authority and enthusiasm:"
+  "Student": {
+    "speaker": "Leda",
+    "promptPrefix": "As an eager student, speak with youthful curiosity:"
+  },
+  "Narrator": {
+    "speaker": "Charon",
+    "promptPrefix": "As a knowledgeable narrator, speak clearly and informatively:"
   }
 }
 ```
 
 ### Available Gemini Voices
-
-The tool supports 30 different voices from Gemini's TTS system:
 
 | Voice Name | Characteristic | Voice Name | Characteristic |
 |------------|----------------|------------|----------------|
@@ -131,184 +156,176 @@ The tool supports 30 different voices from Gemini's TTS system:
 
 ## Anki Card Fields
 
-The generator expects Anki cards with these fields:
-
+### Required Fields
+- **Sentence**: Text to be converted to speech (configurable name)
 - **Speaker**: Character name (matches `characters.json` keys)
-- **Emotion**: Emotional context (optional)
-- **Audio**: Will be populated with generated audio path
-- **Content Fields**: Any field containing text to be spoken (Front, Back, Question, Answer, etc.)
+- **Audio**: Field to store generated audio filename
+
+### Optional Fields
+- **Emotion**: Emotional context for speech generation
+
+### Field Mapping
+You can customize field names using command-line arguments:
+
+```bash
+python process_anki_deck.py "My Deck" \
+  --sentence-field "Japanese" \
+  --speaker-field "Voice" \
+  --bitrate "192k"
+```
+
+## Usage Examples
+
+### Process Language Learning Deck
+```bash
+# Japanese learning deck with custom fields
+python process_anki_deck.py "Japanese::Core 2k" \
+  --sentence-field "Japanese" \
+  --speaker-field "Voice" \
+  --bitrate "192k"
+```
+
+### Preview Before Processing
+```bash
+# Check field mapping first
+python process_anki_deck.py "My Deck" --preview
+
+# Then process
+python process_anki_deck.py "My Deck"
+```
+
+### Batch Processing Multiple Decks
+```python
+from anki_speech_processor import AnkiSpeechProcessor
+
+processor = AnkiSpeechProcessor()
+decks = ["Japanese::Vocabulary", "Japanese::Grammar", "Japanese::Kanji"]
+
+for deck_name in decks:
+    print(f"Processing {deck_name}...")
+    stats = processor.process_deck(deck_name)
+    processor.print_statistics(stats)
+```
 
 ## Configuration Options
 
 ### MP3 Compression
-
-Adjust audio quality and file size:
-
-```python
-# Set compression (bitrate options: "64k", "128k", "192k", "320k")
-generator.set_compression("192k")  # Higher quality, larger files
-generator.set_compression("64k")   # Lower quality, smaller files
-```
-
-### Adding New Characters
-
-```python
-generator.add_character(
-    name="Storyteller",
-    speaker="Schedar",
-    prompt_prefix="As a captivating storyteller, narrate with dramatic flair:"
-)
-```
-
-## Example Usage
-
-Run the example script to see the tool in action:
-
 ```bash
-python example_usage.py
+# Different quality levels
+python process_anki_deck.py "My Deck" --bitrate "64k"   # Smaller files
+python process_anki_deck.py "My Deck" --bitrate "320k"  # Higher quality
 ```
 
-This will demonstrate:
-1. Different initialization methods
-2. Audio generation for sample cards
-3. Compression adjustment
-4. Character management
-5. Error handling
-
-## Supported Providers
-
-### Current Providers
-
-- **Gemini** (`gemini`): Google's Gemini AI TTS
-  - 30 different voices
-  - 24 language support
-  - High-quality natural speech
-
-### Adding New Providers
-
-To add a new TTS provider, extend the `SpeechGenerator` abstract class:
-
-```python
-from speech_generator import SpeechGenerator
-
-class CustomTTSGenerator(SpeechGenerator):
-    def __init__(self, api_key, **kwargs):
-        super().__init__(**kwargs)
-        self.api_key = api_key
-        # Initialize your TTS client here
-    
-    def _generate_audio_data(self, text: str, speaker_name: str, emotion: str = "") -> bytes:
-        # Implement your TTS provider logic here
-        # Return WAV audio data as bytes
-        pass
+### Force Regeneration
+```bash
+# Regenerate all audio files
+python process_anki_deck.py "My Deck" --force
 ```
 
-Then update the factory function to include your provider.
+## AnkiConnect Setup
 
-## Supported Languages
+### Installation
+1. Open Anki
+2. Tools → Add-ons → Get Add-ons
+3. Enter code: `2055492159`
+4. Restart Anki
 
-Gemini TTS supports 24 languages including:
-- English (US/India)
-- Spanish, French, German
-- Japanese, Korean, Chinese
-- Arabic, Hindi, Bengali
-- And more...
-
-## API Usage
-
-### Core Methods
-
-```python
-# Initialize (multiple options)
-generator = GeminiSpeechGenerator(api_key="your-key")
-generator = create_speech_generator("gemini", api_key="your-key")
-generator = create_default_generator(api_key="your-key")
-
-# Generate audio for a card
-audio_path = generator.generate(anki_card_dict)
-
-# Adjust compression
-generator.set_compression("192k")
-
-# Add new character
-generator.add_character("NewChar", "VoiceName", "Prompt prefix:")
+### Verification
+```bash
+# Test AnkiConnect connection
+curl http://localhost:8765 -X POST -d '{"action": "version", "version": 6}'
 ```
 
-### Error Handling
-
-```python
-try:
-    audio_path = generator.generate(card)
-except ValueError as e:
-    print(f"Card data error: {e}")
-except RuntimeError as e:
-    print(f"Generation error: {e}")
-```
-
-## Integration with Anki
-
-To use with your Anki collection:
-
-1. Install [ankiconnect](https://github.com/FooSoft/anki-connect) addon
-2. Query cards using ankiconnect API
-3. Pass card data to `generator.generate()`
-4. Update card's Audio field with returned path
-
-```python
-import requests
-from speech_generator import create_default_generator
-
-# Initialize generator
-generator = create_default_generator()
-
-# Query Anki cards via ankiconnect
-response = requests.post('http://localhost:8765', json={
-    "action": "findCards",
-    "params": {"query": "deck:MyDeck"}
-})
-card_ids = response.json()['result']
-
-# Get card info
-response = requests.post('http://localhost:8765', json={
-    "action": "cardsInfo",
-    "params": {"cards": card_ids}
-})
-cards = response.json()['result']
-
-# Generate audio for each card
-for card in cards:
-    audio_path = generator.generate(card)
-    # Update card with audio path...
-```
+Should return: `{"result": 6, "error": null}`
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"ffmpeg not found"**:
+1. **"Cannot connect to AnkiConnect"**:
+   - Ensure Anki is running
+   - Verify AnkiConnect addon is installed and enabled
+   - Check that port 8765 is not blocked
+
+2. **"No cards found in deck"**:
+   - Verify deck name spelling (case-sensitive)
+   - Use `--list-decks` to see available decks
+   - Check that deck contains cards
+
+3. **"No Sentence field found"**:
+   - Use `--preview` to see available fields
+   - Specify correct field with `--sentence-field`
+
+4. **"ffmpeg not found"**:
    - Install ffmpeg and ensure it's in your PATH
 
-2. **"API key not found"**:
+5. **"API key not found"**:
    - Set `GEMINI_API_KEY` environment variable
-   - Or pass `api_key` parameter to constructor
+   - Or enter interactively when prompted
 
-3. **"No text content found"**:
-   - Ensure card has text in standard fields (Front, Back, etc.)
-   - Check field names in your Anki card type
-
-4. **"Character not found"**:
-   - Add character to `characters.json`
-   - Or use existing character names
-
-5. **"Unsupported TTS provider"**:
-   - Currently only "gemini" is supported
-   - Check provider name spelling
-
-### File Permissions
-
-Ensure the output directory is writable:
+### Field Mapping Issues
 ```bash
-chmod 755 audio_output/
+# Preview to identify fields
+python process_anki_deck.py "My Deck" --preview
+
+# Common field name variations
+--sentence-field "Text"        # For "Text" field
+--sentence-field "Front"       # For "Front" field
+--sentence-field "Japanese"    # For language-specific fields
+```
+
+### Performance Tips
+- Use lower bitrates (64k, 128k) for faster processing
+- Process smaller decks first to test configuration
+- Use preview mode to verify field mapping before bulk processing
+
+## Integration Examples
+
+### Language Learning Workflow
+```bash
+# 1. Preview new cards
+python process_anki_deck.py "Japanese::Daily" --preview
+
+# 2. Process with high quality for study
+python process_anki_deck.py "Japanese::Daily" --bitrate "192k"
+
+# 3. Update only changed cards (automatic)
+python process_anki_deck.py "Japanese::Daily"
+```
+
+### Podcast/Story Deck
+```python
+# Add storyteller character
+processor = AnkiSpeechProcessor()
+processor.speech_generator.add_character(
+    name="Storyteller",
+    speaker="Schedar",
+    prompt_prefix="As a captivating storyteller, narrate with dramatic flair:"
+)
+
+# Process story deck
+stats = processor.process_deck("Stories::Fairy Tales")
+```
+
+## API Reference
+
+### AnkiSpeechProcessor Methods
+
+```python
+# Initialize
+processor = AnkiSpeechProcessor(
+    speech_generator=None,  # Optional custom generator
+    sentence_field="Sentence",
+    speaker_field="Speaker", 
+    emotion_field="Emotion",
+    audio_field="Audio"
+)
+
+# Core methods
+processor.list_decks()                    # Get available decks
+processor.get_card_preview(deck_name)     # Preview cards
+processor.process_deck(deck_name)         # Process entire deck
+processor.print_statistics(stats)        # Show results
 ```
 
 ## License
@@ -337,5 +354,5 @@ We welcome contributions for additional TTS providers! Follow the abstract class
 
 For issues related to:
 - **Gemini API**: Check [Google AI documentation](https://ai.google.dev/gemini-api/docs/speech-generation)
-- **Anki Integration**: See [ankiconnect documentation](https://github.com/FooSoft/anki-connect)
+- **AnkiConnect**: See [AnkiConnect documentation](https://github.com/FooSoft/anki-connect)
 - **This Tool**: Open an issue in this repository 
