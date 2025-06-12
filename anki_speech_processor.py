@@ -170,7 +170,8 @@ class AnkiSpeechProcessor:
             'speaker_prompt': speaker_config.get('promptPrefix', ''),
             'emotion': emotion,
             'provider': self.speech_generator.__class__.__name__,
-            'bitrate': self.speech_generator.mp3_bitrate
+            'bitrate': self.speech_generator.mp3_bitrate,
+            'speed_multiplier': self.speech_generator.speed_multiplier
         }
         
         # Convert to JSON string and hash

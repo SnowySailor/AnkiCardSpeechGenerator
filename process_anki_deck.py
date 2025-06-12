@@ -29,6 +29,8 @@ def main():
     parser.add_argument('--bitrate', default='128k',
                        choices=['64k', '128k', '192k', '320k'],
                        help='MP3 bitrate (default: 128k)')
+    parser.add_argument('--speed', type=float, default=1.0,
+                       help='Audio speed multiplier (default: 1.0 for 100%% speed)')
     parser.add_argument('--provider', default='gemini',
                        choices=['gemini'],
                        help='TTS provider (default: gemini)')
@@ -38,6 +40,11 @@ def main():
                        help='Keep local audio files after storing in Anki (default: delete local files)')
     
     args = parser.parse_args()
+    
+    # Validate speed parameter
+    if args.speed <= 0:
+        print("❌ Error: Speed multiplier must be positive")
+        return 1
     
     # Check for API key
     if not os.getenv("GEMINI_API_KEY") and args.provider == 'gemini':
@@ -50,7 +57,8 @@ def main():
         # Create speech generator
         speech_generator = create_speech_generator(
             provider=args.provider,
-            mp3_bitrate=args.bitrate
+            mp3_bitrate=args.bitrate,
+            speed_multiplier=args.speed
         )
         
         # Create processor
@@ -81,6 +89,7 @@ def main():
         print(f"🚀 Processing deck: {args.deck_name}")
         print(f"📊 Provider: {args.provider}")
         print(f"🎵 Bitrate: {args.bitrate}")
+        print(f"⏩ Speed: {args.speed}x ({args.speed*100:.0f}%)")
         print(f"📝 Sentence field: {args.sentence_field}")
         print(f"🎭 Speaker field: {args.speaker_field}")
         print(f"😊 Emotion field: {args.emotion_field}")

@@ -20,7 +20,8 @@ class SpeechGenerator(ABC):
     def __init__(self, 
                  characters_file: str = "characters.json",
                  output_dir: str = "audio_output",
-                 mp3_bitrate: str = "128k"):
+                 mp3_bitrate: str = "128k",
+                 speed_multiplier: float = 1.0):
         """
         Initialize the SpeechGenerator base class.
         
@@ -28,10 +29,12 @@ class SpeechGenerator(ABC):
             characters_file: Path to the JSON file containing character voice definitions
             output_dir: Directory to save generated audio files
             mp3_bitrate: MP3 compression bitrate (e.g., "64k", "128k", "192k", "320k")
+            speed_multiplier: Speed multiplier for audio playback (e.g., 1.25 = 125% speed)
         """
         self.characters_file = characters_file
         self.output_dir = Path(output_dir)
         self.mp3_bitrate = mp3_bitrate
+        self.speed_multiplier = speed_multiplier
         
         # Create output directory if it doesn't exist
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +70,7 @@ class SpeechGenerator(ABC):
 
     def _convert_to_mp3(self, wav_data: bytes, output_path: Path) -> None:
         """
-        Convert WAV audio data to MP3 and save to file.
+        Convert WAV audio data to MP3 and save to file, applying speed adjustment.
         
         Args:
             wav_data: Raw WAV audio data
@@ -79,8 +82,16 @@ class SpeechGenerator(ABC):
             temp_wav_path = temp_wav.name
 
         try:
-            # Load WAV and convert to MP3
+            # Load WAV and apply speed adjustment
             audio = AudioSegment.from_wav(temp_wav_path)
+            
+            # Apply speed adjustment if speed_multiplier is not 1.0
+            if self.speed_multiplier != 1.0:
+                # Speed up the audio by changing the sample rate
+                # This maintains pitch while changing speed
+                audio = audio.speedup(playback_speed=self.speed_multiplier)
+            
+            # Export to MP3
             audio.export(output_path, format="mp3", bitrate=self.mp3_bitrate)
         finally:
             # Clean up temporary file
@@ -126,9 +137,10 @@ class SpeechGenerator(ABC):
         
         # Generate output filename if not provided
         if output_filename is None:
-            # Create a simple hash-based filename
+            # Create a simple hash-based filename including speed
             import hashlib
-            text_hash = hashlib.sha256(f"{speaker_name}_{clean_text}".encode()).hexdigest()[:8]
+            hash_input = f"gemini_{speaker_name}_{full_prompt}_{self.speed_multiplier}"
+            text_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
             output_filename = f"speech_{text_hash}"
         
         output_path = self.output_dir / f"{output_filename}.mp3"
@@ -165,6 +177,17 @@ class SpeechGenerator(ABC):
         """
         self.mp3_bitrate = bitrate
     
+    def set_speed(self, speed_multiplier: float) -> None:
+        """
+        Set audio speed multiplier.
+        
+        Args:
+            speed_multiplier: Speed multiplier for audio playback (e.g., 1.25 = 125% speed)
+        """
+        if speed_multiplier <= 0:
+            raise ValueError("Speed multiplier must be positive")
+        self.speed_multiplier = speed_multiplier
+    
     def add_character(self, name: str, speaker: str, prompt_prefix: str) -> None:
         """
         Add a new character configuration.
@@ -193,7 +216,8 @@ class GeminiSpeechGenerator(SpeechGenerator):
                  api_key: Optional[str] = None,
                  characters_file: str = "characters.json",
                  output_dir: str = "audio_output",
-                 mp3_bitrate: str = "128k"):
+                 mp3_bitrate: str = "128k",
+                 speed_multiplier: float = 1.0):
         """
         Initialize the Gemini speech generator.
         
@@ -202,9 +226,10 @@ class GeminiSpeechGenerator(SpeechGenerator):
             characters_file: Path to the JSON file containing character voice definitions
             output_dir: Directory to save generated audio files
             mp3_bitrate: MP3 compression bitrate (e.g., "64k", "128k", "192k", "320k")
+            speed_multiplier: Speed multiplier for audio playback (e.g., 1.25 = 125% speed)
         """
         # Initialize base class first
-        super().__init__(characters_file, output_dir, mp3_bitrate)
+        super().__init__(characters_file, output_dir, mp3_bitrate, speed_multiplier)
         
         # Set up Gemini-specific configuration
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
