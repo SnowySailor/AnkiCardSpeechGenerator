@@ -293,27 +293,44 @@ class GeminiSpeechGenerator(SpeechGenerator):
 
         print(f"    Final prompt: {text}")
         
-        # Generate speech using Gemini
-        try:
-            response = self.client.models.generate_content(
-                model="gemini-2.5-flash-preview-tts",
-                contents=text,
-                config=types.GenerateContentConfig(
-                    response_modalities=["AUDIO"],
-                    speech_config=types.SpeechConfig(
-                        voice_config=types.VoiceConfig(
-                            prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                voice_name=voice_name,
+        # Generate speech using Gemini with retry logic for 429 errors
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model="gemini-2.5-flash-preview-tts",
+                    contents=text,
+                    config=types.GenerateContentConfig(
+                        response_modalities=["AUDIO"],
+                        speech_config=types.SpeechConfig(
+                            voice_config=types.VoiceConfig(
+                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                                    voice_name=voice_name,
+                                )
                             )
-                        )
-                    ),
+                        ),
+                    )
                 )
-            )
-            # Extract audio data
-            return response.candidates[0].content.parts[0].inline_data.data
-            
-        except Exception as e:
-            raise RuntimeError(f"Failed to generate speech with Gemini: {e}")
+                # Extract audio data
+                return response.candidates[0].content.parts[0].inline_data.data
+                
+            except Exception as e:
+                # Check if this is a 429 rate limit error
+                error_str = str(e).lower()
+                is_rate_limit = (
+                    "429" in error_str or 
+                    "rate limit" in error_str or 
+                    "too many requests" in error_str or
+                    "quota exceeded" in error_str
+                )
+                
+                if is_rate_limit and attempt < max_retries - 1:
+                    print(f"    Rate limit hit (attempt {attempt + 1}/{max_retries}), sleeping for 60 seconds...")
+                    time.sleep(60)
+                    continue
+                else:
+                    # If not a rate limit error, or we've exhausted retries, raise the error
+                    raise RuntimeError(f"Failed to generate speech with Gemini: {e}")
 
 
 # Factory function to create the default speech generator

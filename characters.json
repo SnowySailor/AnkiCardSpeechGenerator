@@ -1,11 +1,11 @@
 {
   "m3": {
     "speaker": "Umbriel",
-    "promptPrefix": "With a low pitched voice:"
+    "promptPrefix": "低い声で:"
   },
   "m2": {
     "speaker": "Rasalgethi",
-    "promptPrefix": "With a low pitched voice:"
+    "promptPrefix": "低い声で"
   },
   "m1": {
     "speaker": "Charon"
@@ -24,7 +24,7 @@
   },
   "nono": {
       "speaker": "Kore",
-      "promptPrefix": "With a low pitched voice:"
+      "promptPrefix": "低い声で"
   },
   "kura": {
       "speaker": "Sulafat"
@@ -49,44 +49,44 @@
   },
   "akebi": {
       "speaker": "Achernar",
-      "promptPrefix": "With a youthful, higher pitched voice:"
+      "promptPrefix": "若々しくて高い声で"
   },
   "natsu": {
       "speaker": "Autonoe"
   },
   "renge": {
       "speaker": "Kore",
-      "promptPrefix": "With a young child's voice:"
+      "promptPrefix": "幼い子どもの声で"
   },
   "hot": {
       "speaker": "Laomedeia",
-      "promptPrefix": "With a slightly higher voice:"
+      "promptPrefix": "やや高めの声で"
   },
   "yagami": {
       "speaker": "Vindemiatrix"
   },
   "oct": {
       "speaker": "Laomedeia",
-      "promptPrefix": "With a slightly deeper voice:"
+      "promptPrefix": "やや低めの声で"
   },
   "nene": {
       "speaker": "Erinome",
-      "promptPrefix": "With a high pitched, almost annoying voice:"
+      "promptPrefix": "甲高くて少し癇に障る声で"
   },
   "aoba": {
       "speaker": "Achernar",
-      "promptPrefix": "With a youthful, higher pitched voice:"
+      "promptPrefix": "若々しくて高い声で"
   },
   "hazu": {
       "speaker": "Vindemiatrix",
-      "promptPrefix": "With a slightly deep voice:"
+      "promptPrefix": "やや低めの声で"
   },
   "rin": {
       "speaker": "Callirrhoe"
   },
   "fur": {
       "speaker": "Kore",
-      "promptPrefix": "With a lower pitched voice:"
+      "promptPrefix": "低めの声で"
   },
   "haita": {
       "speaker": "Algenib"
@@ -105,7 +105,7 @@
   },
   "rub": {
       "speaker": "Kore",
-      "promptPrefix": "Cheerful idol voice:"
+      "promptPrefix": "明るいアイドルのような声で"
   },
   "kou": {
       "speaker": "Sadaltager"
