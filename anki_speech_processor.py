@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 import requests
+import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from speech_generator import GeminiSpeechGenerator, create_default_generator
@@ -24,7 +25,8 @@ class AnkiSpeechProcessor:
                  speaker_field: str = "Speaker",
                  emotion_field: str = "Emotion",
                  audio_field: str = "Audio",
-                 keep_local_files: bool = False):
+                 keep_local_files: bool = False,
+                 replacements_file: str = "replacements.json"):
         """
         Initialize the Anki speech processor.
         
@@ -36,6 +38,7 @@ class AnkiSpeechProcessor:
             emotion_field: Name of the field containing emotion
             audio_field: Name of the field to store audio filename
             keep_local_files: Whether to keep local audio files after storing in Anki
+            replacements_file: Path to the pronunciations replacements JSON file
         """
         self.speech_generator = speech_generator or create_default_generator()
         self.anki_connect_url = anki_connect_url
@@ -45,8 +48,122 @@ class AnkiSpeechProcessor:
         self.audio_field = audio_field
         self.keep_local_files = keep_local_files
         
+        # Load replacements
+        self.replacements = self._load_replacements(replacements_file)
+        
         # Test AnkiConnect connection
         self._test_anki_connect()
+    
+    def _load_replacements(self, replacements_file: str) -> Dict:
+        """
+        Load pronunciation replacements from JSON file.
+        
+        Args:
+            replacements_file: Path to the replacements JSON file
+            
+        Returns:
+            Replacements dictionary or empty dict if file not found
+        """
+        try:
+            with open(replacements_file, 'r', encoding='utf-8') as f:
+                replacements = json.load(f)
+                print(f"Loaded pronunciation replacements from {replacements_file}")
+                return replacements
+        except FileNotFoundError:
+            print(f"Warning: Replacements file {replacements_file} not found. Proceeding without replacements.")
+            return {}
+        except json.JSONDecodeError as e:
+            print(f"Warning: Invalid JSON in {replacements_file}: {e}. Proceeding without replacements.")
+            return {}
+    
+    def _parse_source_field(self, source: str) -> Optional[Tuple[str, str, List[str]]]:
+        """
+        Parse the Source field to extract manga title, volume, and pages.
+        
+        Args:
+            source: Source field value (e.g., "FUR V1 P12,13" or "ASU V5 P123")
+            
+        Returns:
+            Tuple of (manga_title, volume, pages_list) or None if invalid format
+        """
+        if not source:
+            return None
+        
+        # Match pattern like "FUR V1 P12,13" or "ASU V5 P123"
+        pattern = r'^([A-Z]+)\s+V(\d+)\s+P([\d,]+)$'
+        match = re.match(pattern, source.strip())
+        
+        if not match:
+            return None
+        
+        manga_title = match.group(1)
+        volume = f"V{match.group(2)}"
+        pages_str = match.group(3)
+        
+        # Split pages by comma and add P prefix
+        pages = [f"P{page.strip()}" for page in pages_str.split(',')]
+        
+        return manga_title, volume, pages
+    
+    def _get_applicable_replacements(self, text: str, source: str) -> List[Tuple[str, str]]:
+        """
+        Get applicable pronunciation replacements for given text and source.
+        
+        Args:
+            text: The text content to check
+            source: Source field value
+            
+        Returns:
+            List of (original_word, replacement) tuples that appear in the text
+        """
+        if not self.replacements:
+            return []
+        
+        applicable_replacements = []
+        
+        # Always check global replacements (top-level "*")
+        if "*" in self.replacements:
+            global_replacements = self.replacements["*"]
+            for original, replacement in global_replacements.items():
+                if original in text:
+                    applicable_replacements.append((original, replacement))
+        
+        # Parse source field
+        source_info = self._parse_source_field(source)
+        if not source_info:
+            return applicable_replacements
+        
+        manga_title, volume, pages = source_info
+        
+        # Check manga-specific replacements
+        if manga_title in self.replacements:
+            manga_replacements = self.replacements[manga_title]
+            
+            # Check manga-level wildcards
+            if "*" in manga_replacements:
+                for original, replacement in manga_replacements["*"].items():
+                    if original in text and (original, replacement) not in applicable_replacements:
+                        applicable_replacements.append((original, replacement))
+            
+            # Check volume-specific replacements
+            if volume in manga_replacements:
+                volume_replacements = manga_replacements[volume]
+                
+                # Check volume-level wildcards
+                if "*" in volume_replacements:
+                    for original, replacement in volume_replacements["*"].items():
+                        if original in text and (original, replacement) not in applicable_replacements:
+                            applicable_replacements.append((original, replacement))
+                
+                # Check page-specific replacements
+                for page in pages:
+                    if page in volume_replacements:
+                        page_replacements = volume_replacements[page]
+                        for original, replacement in page_replacements.items():
+                            if original in text and (original, replacement) not in applicable_replacements:
+                                applicable_replacements.append((original, replacement))
+        
+        return applicable_replacements
     
     def _test_anki_connect(self) -> None:
         """Test if AnkiConnect is available."""
@@ -138,24 +255,36 @@ class AnkiSpeechProcessor:
             # No speaker configuration, just add emotion to default
             return f"{emotion}の感情でこれを言いなさい： {text}"
     
-    def _build_complete_prompt(self, text: str, speaker_name: str, emotion: str) -> str:
+    def _build_complete_prompt(self, text: str, speaker_name: str, emotion: str, card: Dict[str, Any]) -> str:
         """
-        Build the complete prompt in the desired 3-line format:
-        Line 1: {character promptPrefix} (if exists)
-        Line 2: {emotion}の感情で (if emotion exists)
-        Line 3: これを言いなさい： {text} (always included)
+        Build the complete prompt in the desired format with pronunciation replacements:
+        Line 1: このリストは言って欲しい分に出てくる言葉の読み方：{replacements} (if replacements exist)
+        Line 2: {character promptPrefix} (if exists)
+        Line 3: {emotion}の感情で (if emotion exists)
+        Line 4: これを言いなさい： {text} (always included)
         
         Args:
             text: The base text to be spoken
             speaker_name: Name of the speaker character
             emotion: Emotion context (can be empty)
+            card: Anki card data (used to get Source field)
             
         Returns:
             Complete prompt formatted for speech generation
         """
         prompt_lines = []
         
-        # Line 1: Character prompt prefix (if exists)
+        # Line 1: Pronunciation replacements (if applicable)
+        fields = card.get('fields', {})
+        source = fields.get('Source', {}).get('value', '')
+        replacements = self._get_applicable_replacements(text, source)
+        
+        if replacements:
+            replacement_pairs = [f"{original} -> {replacement}" for original, replacement in replacements]
+            replacements_line = f"このリストは言って欲しい分に出てくる言葉の読み方：{', '.join(replacement_pairs)}"
+            prompt_lines.append(replacements_line)
+        
+        # Line 2: Character prompt prefix (if exists)
         if speaker_name in self.speech_generator.characters:
             char_config = self.speech_generator.characters[speaker_name]
             prompt_prefix = char_config.get('promptPrefix', '')
@@ -165,18 +294,18 @@ class AnkiSpeechProcessor:
                 if clean_prefix:
                     prompt_lines.append(clean_prefix)
         
-        # Line 2: Emotion directive (if emotion exists)
+        # Line 3: Emotion directive (if emotion exists)
         if emotion and emotion.strip():
             prompt_lines.append(f"{emotion}の感情で")
         
-        # Line 3: Main directive (always included)
+        # Line 4: Main directive (always included)
         prompt_lines.append(f"これを言いなさい： {text}")
         
         return '\n'.join(prompt_lines)
     
     def _generate_audio_hash(self, card: Dict[str, Any]) -> str:
         """
-        Generate a hash for the audio based on content, speaker data, and provider.
+        Generate a hash for the audio based on content, speaker data, provider, and replacements.
         
         Args:
             card: Anki card data
@@ -189,9 +318,13 @@ class AnkiSpeechProcessor:
         sentence = fields.get(self.sentence_field, {}).get('value', '')
         speaker_name = fields.get(self.speaker_field, {}).get('value', 'Narrator')
         emotion = fields.get(self.emotion_field, {}).get('value', '')
+        source = fields.get('Source', {}).get('value', '')
         
         # Clean HTML from sentence
         clean_sentence = self.speech_generator._clean_html(sentence)
+        
+        # Get applicable replacements
+        replacements = self._get_applicable_replacements(clean_sentence, source)
         
         # Get speaker configuration
         speaker_config = {}
@@ -205,6 +338,8 @@ class AnkiSpeechProcessor:
             'speaker_voice': speaker_config.get('speaker', 'Charon'),
             'speaker_prompt': speaker_config.get('promptPrefix', ''),
             'emotion': emotion,
+            'source': source,
+            'replacements': replacements,  # Include replacements in hash
             'provider': self.speech_generator.__class__.__name__,
             'bitrate': self.speech_generator.mp3_bitrate,
             'speed_multiplier': self.speech_generator.speed_multiplier
@@ -409,7 +544,7 @@ class AnkiSpeechProcessor:
                 print(f"  🔄 Generating audio...")
                 
                 # Build complete prompt in the new 3-line format
-                final_prompt = self._build_complete_prompt(text, speaker_name, emotion)
+                final_prompt = self._build_complete_prompt(text, speaker_name, emotion, card)
                 
                 # Generate audio using the complete prompt API to avoid double prompt processing
                 new_filename = f"speech_{new_hash}"

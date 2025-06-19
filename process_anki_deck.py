@@ -34,6 +34,8 @@ def main():
     parser.add_argument('--provider', default='gemini',
                        choices=['gemini'],
                        help='TTS provider (default: gemini)')
+    parser.add_argument('--replacements', default='replacements.json',
+                        help='Path to pronunciation replacements JSON file (default: replacements.json)')
     parser.add_argument('--list-decks', action='store_true',
                        help='List all available decks and exit')
     parser.add_argument('--keep-local-files', action='store_true',
@@ -68,7 +70,8 @@ def main():
             speaker_field=args.speaker_field,
             emotion_field=args.emotion_field,
             audio_field=args.audio_field,
-            keep_local_files=args.keep_local_files
+            keep_local_files=args.keep_local_files,
+            replacements_file=args.replacements
         )
         
         # List decks if requested
@@ -94,6 +97,7 @@ def main():
         print(f"🎭 Speaker field: {args.speaker_field}")
         print(f"😊 Emotion field: {args.emotion_field}")
         print(f"🔊 Audio field: {args.audio_field}")
+        print(f"📖 Replacements file: {args.replacements}")
         print(f"💾 Keep local files: {'Yes' if args.keep_local_files else 'No'}")
         
         if args.force:
@@ -142,7 +146,7 @@ def interactive_mode():
             os.environ["GEMINI_API_KEY"] = api_key
         
         # Create processor with defaults
-        processor = AnkiSpeechProcessor()
+        processor = AnkiSpeechProcessor(replacements_file="replacements.json")
         
         # List available decks
         print("\n📚 Available decks:")
