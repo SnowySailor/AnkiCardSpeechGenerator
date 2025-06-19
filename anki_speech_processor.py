@@ -361,6 +361,9 @@ class AnkiSpeechProcessor:
         """
         cards = self.get_deck_cards(deck_name)
         
+        # Sort cards by cardId (creation timestamp) in descending order
+        cards.sort(key=lambda card: card.get('cardId', 0), reverse=True)
+        
         stats = {
             'total_cards': len(cards),
             'processed': 0,
