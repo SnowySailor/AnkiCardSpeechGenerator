@@ -149,6 +149,41 @@ class SpeechGenerator(ABC):
         
         return str(output_path)
     
+    def generate_with_complete_prompt(self, speaker_name: str, complete_prompt: str, output_filename: Optional[str] = None) -> str:
+        """
+        Generate speech audio from a complete prompt that bypasses internal prompt building.
+        
+        Args:
+            speaker_name: Name of the speaker character (used for voice selection only)
+            complete_prompt: Complete prompt text ready for speech generation
+            output_filename: Optional custom filename (without extension). If None, generates based on hash.
+            
+        Returns:
+            Path to the generated MP3 audio file
+        """
+        # Clean HTML from prompt
+        clean_prompt = self._clean_html(complete_prompt)
+        
+        if not clean_prompt.strip():
+            raise ValueError("No prompt content provided to generate speech")
+        
+        # Generate audio data directly without additional prompt building
+        wav_bytes = self._generate_audio_data(clean_prompt, speaker_name)
+        
+        # Generate output filename if not provided
+        if output_filename is None:
+            # Create a simple hash-based filename including speed
+            import hashlib
+            hash_input = f"gemini_{speaker_name}_{clean_prompt}_{self.speed_multiplier}"
+            text_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
+            output_filename = f"speech_{text_hash}"
+        
+        output_path = self.output_dir / f"{output_filename}.mp3"
+        # Convert to MP3 and save
+        self._convert_to_mp3(wav_bytes, output_path)
+        
+        return str(output_path)
+    
     def _build_speech_prompt(self, text: str, speaker_name: str) -> str:
         """
         Build the complete speech prompt including character-specific prefixes.
@@ -162,7 +197,7 @@ class SpeechGenerator(ABC):
         """
         if speaker_name not in self.characters:
             # Use default if character not found
-            return f"Say: {text}"
+            return text
         else:
             char_config = self.characters[speaker_name]
             prompt_prefix = char_config['promptPrefix'] if 'promptPrefix' in char_config else ''

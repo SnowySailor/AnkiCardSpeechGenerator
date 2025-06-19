@@ -125,18 +125,54 @@ class AnkiSpeechProcessor:
         if speaker_name in self.speech_generator.characters:
             char_config = self.speech_generator.characters[speaker_name]
             prompt_prefix = char_config['promptPrefix']
-            
+
             # Modify the prompt to include emotion
             # Replace the colon with emotion context
             if prompt_prefix.endswith(':'):
-                emotion_prompt = prompt_prefix[:-1] + f" with {emotion}:"
+                emotion_prompt = prompt_prefix[:-1] + f"、{emotion}の感情でこれを言いなさい："
             else:
-                emotion_prompt = f"{prompt_prefix} with {emotion}:"
+                emotion_prompt = f"{prompt_prefix}、{emotion}の感情でこれを言いなさい："
             
             return f"{emotion_prompt} {text}"
         else:
             # No speaker configuration, just add emotion to default
-            return f"Say with {emotion}: {text}"
+            return f"{emotion}の感情でこれを言いなさい： {text}"
+    
+    def _build_complete_prompt(self, text: str, speaker_name: str, emotion: str) -> str:
+        """
+        Build the complete prompt in the desired 3-line format:
+        Line 1: {character promptPrefix} (if exists)
+        Line 2: {emotion}の感情で (if emotion exists)
+        Line 3: これを言いなさい： {text} (always included)
+        
+        Args:
+            text: The base text to be spoken
+            speaker_name: Name of the speaker character
+            emotion: Emotion context (can be empty)
+            
+        Returns:
+            Complete prompt formatted for speech generation
+        """
+        prompt_lines = []
+        
+        # Line 1: Character prompt prefix (if exists)
+        if speaker_name in self.speech_generator.characters:
+            char_config = self.speech_generator.characters[speaker_name]
+            prompt_prefix = char_config.get('promptPrefix', '')
+            if prompt_prefix and prompt_prefix.strip():
+                # Remove trailing colon or punctuation if present
+                clean_prefix = prompt_prefix.rstrip(':：。、').strip()
+                if clean_prefix:
+                    prompt_lines.append(clean_prefix)
+        
+        # Line 2: Emotion directive (if emotion exists)
+        if emotion and emotion.strip():
+            prompt_lines.append(f"{emotion}の感情で")
+        
+        # Line 3: Main directive (always included)
+        prompt_lines.append(f"これを言いなさい： {text}")
+        
+        return '\n'.join(prompt_lines)
     
     def _generate_audio_hash(self, card: Dict[str, Any]) -> str:
         """
@@ -369,17 +405,14 @@ class AnkiSpeechProcessor:
                 print(f"  🎭 Speaker: {speaker_name} ({emotion if emotion else 'No emotion'})")
                 print(f"  🔄 Generating audio...")
                 
-                # Build text with emotion context if provided
-                if emotion and emotion.strip():
-                    final_text = self._build_emotion_text(text, speaker_name, emotion)
-                else:
-                    final_text = text
+                # Build complete prompt in the new 3-line format
+                final_prompt = self._build_complete_prompt(text, speaker_name, emotion)
                 
-                # Generate audio using the simplified API
+                # Generate audio using the complete prompt API to avoid double prompt processing
                 new_filename = f"speech_{new_hash}"
-                audio_path = self.speech_generator.generate(
+                audio_path = self.speech_generator.generate_with_complete_prompt(
                     speaker_name=speaker_name,
-                    text=final_text,
+                    complete_prompt=final_prompt,
                     output_filename=new_filename
                 )
                 
