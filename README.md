@@ -40,11 +40,6 @@ The tool uses an abstract base class `SpeechGenerator` with provider-specific im
    - Enter code: `2055492159`
    - Restart Anki
 
-4. **Get Gemini API Key**:
-   - Visit [Google AI Studio](https://ai.google.dev/)
-   - Generate an API key
-   - Set environment variable: `export GEMINI_API_KEY="your-api-key-here"`
-
 ## Quick Start
 
 ### Method 1: Interactive Mode (Recommended)
@@ -258,10 +253,6 @@ Should return: `{"result": 6, "error": null}`
 
 4. **"ffmpeg not found"**:
    - Install ffmpeg and ensure it's in your PATH
-
-5. **"API key not found"**:
-   - Set `GEMINI_API_KEY` environment variable
-   - Or enter interactively when prompted
 
 ### Field Mapping Issues
 ```bash

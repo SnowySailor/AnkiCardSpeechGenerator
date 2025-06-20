@@ -48,13 +48,6 @@ def main():
         print("❌ Error: Speed multiplier must be positive")
         return 1
     
-    # Check for API key
-    if not os.getenv("GEMINI_API_KEY") and args.provider == 'gemini':
-        print("❌ Error: GEMINI_API_KEY environment variable not set")
-        print("Get your API key from: https://ai.google.dev/")
-        print("Then run: export GEMINI_API_KEY='your-api-key-here'")
-        return 1
-    
     try:
         # Create speech generator
         speech_generator = create_speech_generator(
@@ -136,15 +129,6 @@ def interactive_mode():
     print("=" * 50)
     
     try:
-        # Check API key
-        if not os.getenv("GEMINI_API_KEY"):
-            print("❌ GEMINI_API_KEY not found!")
-            api_key = input("Enter your Gemini API key: ").strip()
-            if not api_key:
-                print("API key required. Exiting.")
-                return
-            os.environ["GEMINI_API_KEY"] = api_key
-        
         # Create processor with defaults
         processor = AnkiSpeechProcessor(replacements_file="replacements.json")
         

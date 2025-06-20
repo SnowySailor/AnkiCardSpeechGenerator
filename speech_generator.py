@@ -257,7 +257,7 @@ class GeminiSpeechGenerator(SpeechGenerator):
         Initialize the Gemini speech generator.
         
         Args:
-            api_key: Google Gemini API key. If None, will try to get from GEMINI_API_KEY env var
+            api_key: Google Gemini API key. If None, will load multiple keys from env.json
             characters_file: Path to the JSON file containing character voice definitions
             output_dir: Directory to save generated audio files
             mp3_bitrate: MP3 compression bitrate (e.g., "64k", "128k", "192k", "320k")
@@ -266,13 +266,47 @@ class GeminiSpeechGenerator(SpeechGenerator):
         # Initialize base class first
         super().__init__(characters_file, output_dir, mp3_bitrate, speed_multiplier)
         
-        # Set up Gemini-specific configuration
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        if not self.api_key:
-            raise ValueError("API key must be provided either as parameter or GEMINI_API_KEY environment variable")
+        # Load API keys
+        if api_key is not None:
+            # Single API key provided (backward compatibility)
+            api_keys = [api_key]
+        else:
+            # Load multiple API keys from env.json
+            api_keys = self._load_api_keys_from_file()
         
-        # Initialize Gemini client
-        self.client = genai.Client(api_key=self.api_key)
+        if not api_keys:
+            raise ValueError("At least one API key must be provided either as parameter or in env.json")
+        
+        # Create clients for each API key
+        self.clients = []
+        for key in api_keys:
+            client = genai.Client(api_key=key)
+            self.clients.append(client)
+        
+        # Round-robin counter
+        self._client_index = 0
+        
+        print(f"Initialized Gemini speech generator with {len(self.clients)} API key(s)")
+    
+    def _load_api_keys_from_file(self) -> list:
+        """Load API keys from env.json file."""
+        try:
+            with open("env.json", 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                api_keys = data.get("geminiApiKeys", [])
+                if not api_keys:
+                    raise ValueError("No API keys found in env.json under 'geminiApiKeys'")
+                return api_keys
+        except FileNotFoundError:
+            raise FileNotFoundError("env.json file not found. Please create it with 'geminiApiKeys' array.")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in env.json: {e}")
+    
+    def get_next_client(self):
+        """Get the next client in round-robin fashion."""
+        client = self.clients[self._client_index]
+        self._client_index = (self._client_index + 1) % len(self.clients)
+        return client
     
     def _generate_audio_data(self, text: str, speaker_name: str) -> bytes:
         """
@@ -289,15 +323,16 @@ class GeminiSpeechGenerator(SpeechGenerator):
         if speaker_name in self.characters:
             voice_name = self.characters[speaker_name]['speaker']
         else:
-            voice_name = 'Charon'  # Default voice
+            voice_name = 'Kore'  # Default voice
 
         print(f"    Final prompt: {text}")
         
         # Generate speech using Gemini with retry logic for 429 errors
         max_retries = 3
         for attempt in range(max_retries):
+            client = self.get_next_client()
             try:
-                response = self.client.models.generate_content(
+                response = client.models.generate_content(
                     model="gemini-2.5-flash-preview-tts",
                     contents=text,
                     config=types.GenerateContentConfig(
@@ -325,8 +360,8 @@ class GeminiSpeechGenerator(SpeechGenerator):
                 )
                 
                 if is_rate_limit and attempt < max_retries - 1:
-                    print(f"    Rate limit hit (attempt {attempt + 1}/{max_retries}), sleeping for 60 seconds...")
-                    time.sleep(60)
+                    print(f"    Rate limit hit (attempt {attempt + 1}/{max_retries}), sleeping for 10 seconds...")
+                    time.sleep(10)
                     continue
                 else:
                     # If not a rate limit error, or we've exhausted retries, raise the error
