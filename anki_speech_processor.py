@@ -25,6 +25,7 @@ class AnkiSpeechProcessor:
                  speaker_field: str = "Speaker",
                  emotion_field: str = "Emotion",
                  audio_field: str = "Audio",
+                 regenerate_audio_field: str = "Regenerate Audio",
                  keep_local_files: bool = False,
                  replacements_file: str = "replacements.json"):
         """
@@ -37,6 +38,7 @@ class AnkiSpeechProcessor:
             speaker_field: Name of the field containing speaker name
             emotion_field: Name of the field containing emotion
             audio_field: Name of the field to store audio filename
+            regenerate_audio_field: Name of the field that triggers regeneration when it has any value
             keep_local_files: Whether to keep local audio files after storing in Anki
             replacements_file: Path to the pronunciations replacements JSON file
         """
@@ -46,6 +48,7 @@ class AnkiSpeechProcessor:
         self.speaker_field = speaker_field
         self.emotion_field = emotion_field
         self.audio_field = audio_field
+        self.regenerate_audio_field = regenerate_audio_field
         self.keep_local_files = keep_local_files
         
         # Load replacements
@@ -162,7 +165,7 @@ class AnkiSpeechProcessor:
                         for original, replacement in page_replacements.items():
                             if original in text and (original, replacement) not in applicable_replacements:
                                 applicable_replacements.append((original, replacement))
-        
+
         return applicable_replacements
     
     def _test_anki_connect(self) -> None:
@@ -407,7 +410,7 @@ class AnkiSpeechProcessor:
     
     def _needs_audio_generation(self, card: Dict[str, Any]) -> Tuple[bool, str]:
         """
-        Check if a card needs audio generation based on hash comparison.
+        Check if a card needs audio generation based on hash comparison or regenerate field.
         
         Args:
             card: Anki card data
@@ -421,6 +424,14 @@ class AnkiSpeechProcessor:
         # Skip if no sentence content
         if not sentence or not sentence.strip():
             return False, ""
+        
+        # Check if regenerate field has any value
+        regenerate_value = fields.get(self.regenerate_audio_field, {}).get('value', '')
+        if regenerate_value and regenerate_value.strip():
+            print(f"  🔄 Regenerate field has value: '{regenerate_value}' - forcing regeneration")
+            # Generate new hash and return True for regeneration
+            new_hash = self._generate_audio_hash(card)
+            return True, new_hash
         
         # Generate new hash
         new_hash = self._generate_audio_hash(card)
@@ -462,6 +473,22 @@ class AnkiSpeechProcessor:
             raise RuntimeError(f"Audio file not found: {audio_file_path}")
         except Exception as e:
             raise RuntimeError(f"Failed to store audio file in Anki: {e}")
+    
+    def _clear_regenerate_field(self, card_id: int) -> None:
+        """
+        Clear the regenerate audio field after successful processing.
+        
+        Args:
+            card_id: Anki card ID
+        """
+        self._anki_request("updateNoteFields", {
+            "note": {
+                "id": card_id,
+                "fields": {
+                    self.regenerate_audio_field: ""
+                }
+            }
+        })
     
     def _update_card_audio(self, card_id: int, audio_filename: str) -> None:
         """
@@ -561,6 +588,11 @@ class AnkiSpeechProcessor:
                 # Update card in Anki
                 self._update_card_audio(note_id, audio_filename)
                 
+                # Clear regenerate field if it was set
+                regenerate_value = fields.get(self.regenerate_audio_field, {}).get('value', '')
+                if regenerate_value and regenerate_value.strip():
+                    self._clear_regenerate_field(note_id)
+                
                 # Clean up local file if configured to do so
                 if not self.keep_local_files:
                     try:
@@ -631,8 +663,13 @@ class AnkiSpeechProcessor:
             
             # Show what would be used for audio generation
             sentence = fields.get(self.sentence_field, {}).get('value', '')
+            regenerate_value = fields.get(self.regenerate_audio_field, {}).get('value', '')
+            
             if sentence:
                 hash_val = self._generate_audio_hash(card)
-                print(f"  → Would generate: [sound:speech_{hash_val}.mp3]")
+                if regenerate_value and regenerate_value.strip():
+                    print(f"  → Would regenerate (forced): [sound:speech_{hash_val}.mp3]")
+                else:
+                    print(f"  → Would generate: [sound:speech_{hash_val}.mp3]")
             else:
                 print(f"  → No '{self.sentence_field}' field found!") 

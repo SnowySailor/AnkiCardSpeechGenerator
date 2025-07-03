@@ -346,6 +346,7 @@ class GeminiSpeechGenerator(SpeechGenerator):
                         ),
                     )
                 )
+
                 # Extract audio data
                 return response.candidates[0].content.parts[0].inline_data.data
                 
