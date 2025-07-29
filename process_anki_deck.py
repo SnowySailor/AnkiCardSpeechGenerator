@@ -40,14 +40,14 @@ def main():
                        help='List all available decks and exit')
     parser.add_argument('--keep-local-files', action='store_true',
                        help='Keep local audio files after storing in Anki (default: delete local files)')
-    
+
     args = parser.parse_args()
-    
+
     # Validate speed parameter
     if args.speed <= 0:
         print("❌ Error: Speed multiplier must be positive")
         return 1
-    
+
     try:
         # Create speech generator
         speech_generator = create_speech_generator(
@@ -55,7 +55,7 @@ def main():
             mp3_bitrate=args.bitrate,
             speed_multiplier=args.speed
         )
-        
+
         # Create processor
         processor = AnkiSpeechProcessor(
             speech_generator=speech_generator,
@@ -66,7 +66,7 @@ def main():
             keep_local_files=args.keep_local_files,
             replacements_file=args.replacements
         )
-        
+
         # List decks if requested
         if args.list_decks:
             print("Available decks:")
@@ -74,13 +74,13 @@ def main():
             for i, deck in enumerate(decks, 1):
                 print(f"  {i}. {deck}")
             return 0
-        
+
         # Preview mode
         if args.preview:
             print(f"🔍 Preview mode: {args.deck_name}")
             processor.get_card_preview(args.deck_name, limit=10)
             return 0
-        
+
         # Process the deck
         print(f"🚀 Processing deck: {args.deck_name}")
         print(f"📊 Provider: {args.provider}")
@@ -92,22 +92,22 @@ def main():
         print(f"🔊 Audio field: {args.audio_field}")
         print(f"📖 Replacements file: {args.replacements}")
         print(f"💾 Keep local files: {'Yes' if args.keep_local_files else 'No'}")
-        
+
         if args.force:
             print("⚠️ Force mode: Will regenerate ALL audio files")
-        
+
         # Confirm before processing
         confirm = input(f"\nProceed with processing? (y/N): ").strip().lower()
         if confirm != 'y':
             print("Aborted.")
             return 0
-        
+
         # Process the deck
         stats = processor.process_deck(args.deck_name, force_regenerate=args.force)
         processor.print_statistics(stats)
-        
+
         return 0
-        
+
     except AnkiConnectError as e:
         print(f"❌ AnkiConnect Error: {e}")
         print("\nMake sure:")
@@ -115,7 +115,7 @@ def main():
         print("2. AnkiConnect addon is installed")
         print("3. AnkiConnect is enabled in Anki")
         return 1
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
         return 1
@@ -127,24 +127,24 @@ def interactive_mode():
     """
     print("🎤 Anki Speech Generator - Interactive Mode")
     print("=" * 50)
-    
+
     try:
         # Create processor with defaults
         processor = AnkiSpeechProcessor(replacements_file="replacements.json")
-        
+
         # List available decks
         print("\n📚 Available decks:")
         decks = processor.list_decks()
         for i, deck in enumerate(decks, 1):
             print(f"  {i}. {deck}")
-        
+
         # Get user choice
         while True:
             try:
                 choice = input(f"\nSelect deck (1-{len(decks)}) or 'q' to quit: ").strip()
                 if choice.lower() == 'q':
                     return
-                
+
                 deck_idx = int(choice) - 1
                 if 0 <= deck_idx < len(decks):
                     selected_deck = decks[deck_idx]
@@ -153,11 +153,11 @@ def interactive_mode():
                     print("Invalid selection. Try again.")
             except ValueError:
                 print("Please enter a number or 'q'.")
-        
+
         # Preview cards
         print(f"\n🔍 Previewing deck: {selected_deck}")
         processor.get_card_preview(selected_deck)
-        
+
         # Confirm processing
         confirm = input(f"\nProcess deck '{selected_deck}'? (y/N): ").strip().lower()
         if confirm == 'y':
@@ -165,11 +165,11 @@ def interactive_mode():
             processor.print_statistics(stats)
         else:
             print("Processing cancelled.")
-            
+
     except AnkiConnectError as e:
         print(f"❌ AnkiConnect Error: {e}")
         print("Make sure Anki is running with AnkiConnect addon installed.")
-        
+
     except Exception as e:
         print(f"❌ Error: {e}")
 

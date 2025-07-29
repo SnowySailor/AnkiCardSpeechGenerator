@@ -112,5 +112,12 @@
   },
   "kao": {
       "speaker": "Autonoe"
+  },
+  "ruri": {
+    "speaker": "Despina"
+  },
+  "rurim": {
+    "speaker": "Despina",
+    "promptPrefix": "やや低めの声で"
   }
 }
