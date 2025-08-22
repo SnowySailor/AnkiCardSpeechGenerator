@@ -10,7 +10,6 @@ from google import genai
 from google.genai import types
 from pydub import AudioSegment
 from pydub.utils import which
-from bs4 import BeautifulSoup
 
 class SpeechGenerator(ABC):
     """
@@ -55,11 +54,6 @@ class SpeechGenerator(ABC):
             raise FileNotFoundError(f"Characters file '{self.characters_file}' not found")
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in characters file: {e}")
-
-    def _clean_html(self, text: str) -> str:
-        soup = BeautifulSoup(text, features="html.parser")
-        stripped_text = soup.get_text()
-        return stripped_text
 
     def wave_file(self, filename, pcm, channels=1, rate=24000, sample_width=2):
         with wave.open(filename, "wb") as wf:
@@ -149,7 +143,7 @@ class SpeechGenerator(ABC):
 
         return str(output_path)
 
-    def generate_with_complete_prompt(self, speaker_name: str, complete_prompt: str, output_filename: Optional[str] = None) -> str:
+    def generate_with_complete_prompt(self, speaker_name: str, complete_prompt: str, output_filename: str) -> str:
         """
         Generate speech audio from a complete prompt that bypasses internal prompt building.
 
@@ -161,22 +155,12 @@ class SpeechGenerator(ABC):
         Returns:
             Path to the generated MP3 audio file
         """
-        # Clean HTML from prompt
-        clean_prompt = self._clean_html(complete_prompt)
 
-        if not clean_prompt.strip():
+        if not complete_prompt.strip():
             raise ValueError("No prompt content provided to generate speech")
 
         # Generate audio data directly without additional prompt building
-        wav_bytes = self._generate_audio_data(clean_prompt, speaker_name)
-
-        # Generate output filename if not provided
-        if output_filename is None:
-            # Create a simple hash-based filename including speed
-            import hashlib
-            hash_input = f"gemini_{speaker_name}_{clean_prompt}_{self.speed_multiplier}"
-            text_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
-            output_filename = f"speech_{text_hash}"
+        wav_bytes = self._generate_audio_data(complete_prompt, speaker_name)
 
         output_path = self.output_dir / f"{output_filename}.mp3"
         # Convert to MP3 and save
@@ -333,7 +317,7 @@ class GeminiSpeechGenerator(SpeechGenerator):
             client = self.get_next_client()
             try:
                 response = client.models.generate_content(
-                    model="gemini-2.5-flash-preview-tts",
+                    model="gemini-2.5-pro-preview-tts",
                     contents=text,
                     config=types.GenerateContentConfig(
                         response_modalities=["AUDIO"],

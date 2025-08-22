@@ -5,8 +5,8 @@ import requests
 import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
-from speech_generator import GeminiSpeechGenerator, create_default_generator
-
+from speech_generator import create_default_generator
+from bs4 import BeautifulSoup
 
 class AnkiConnectError(Exception):
     """Exception raised for AnkiConnect API errors."""
@@ -223,7 +223,7 @@ class AnkiSpeechProcessor:
         sentence = fields.get(self.sentence_field, {}).get('value', '')
 
         # Clean HTML from sentence
-        clean_sentence = self.speech_generator._clean_html(sentence)
+        clean_sentence = self._clean_html(sentence)
         return clean_sentence
 
     def _build_emotion_text(self, text: str, speaker_name: str, emotion: str) -> str:
@@ -320,10 +320,12 @@ class AnkiSpeechProcessor:
         source = fields.get('Source', {}).get('value', '')
 
         # Clean HTML from sentence
-        clean_sentence = self.speech_generator._clean_html(sentence)
+        clean_sentence = self._clean_html(sentence)
 
         # Get applicable replacements
         replacements = self._get_applicable_replacements(clean_sentence, source)
+        if len(replacements) > 0:
+            replacements.append(('__replacements_version', 2))
 
         # Get speaker configuration
         speaker_config = {}
@@ -332,6 +334,7 @@ class AnkiSpeechProcessor:
 
         # Create hash input data
         hash_data = {
+            'version': 3,
             'sentence': clean_sentence,
             'speaker_name': speaker_name,
             'speaker_voice': speaker_config.get('speaker', 'Charon'),
@@ -669,3 +672,8 @@ class AnkiSpeechProcessor:
                     print(f"  → Would generate: [sound:speech_{hash_val}.mp3]")
             else:
                 print(f"  → No '{self.sentence_field}' field found!") 
+
+    def _clean_html(self, text: str) -> str:
+        soup = BeautifulSoup(text, features="html.parser")
+        stripped_text = soup.get_text()
+        return stripped_text
