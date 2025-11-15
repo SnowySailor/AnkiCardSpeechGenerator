@@ -9,6 +9,7 @@ import os
 import argparse
 from anki_speech_processor import AnkiSpeechProcessor, AnkiConnectError
 from speech_generator import GeminiSpeechGenerator, create_speech_generator
+import traceback
 
 
 def main():
@@ -117,6 +118,7 @@ def main():
         return 1
 
     except Exception as e:
+        print(traceback.format_exc())
         print(f"❌ Error: {e}")
         return 1
 
@@ -171,6 +173,7 @@ def interactive_mode():
         print("Make sure Anki is running with AnkiConnect addon installed.")
 
     except Exception as e:
+        print(traceback.format_exc())
         print(f"❌ Error: {e}")
 
 

@@ -105,44 +105,6 @@ class SpeechGenerator(ABC):
         """
         pass
 
-    def generate(self, speaker_name: str, text: str, output_filename: Optional[str] = None) -> str:
-        """
-        Generate speech audio from text using the specified speaker.
-
-        Args:
-            speaker_name: Name of the speaker character
-            text: Text to be converted to speech
-            output_filename: Optional custom filename (without extension). If None, generates based on hash.
-
-        Returns:
-            Path to the generated MP3 audio file
-        """
-        # Clean HTML from text
-        clean_text = self._clean_html(text)
-
-        if not clean_text.strip():
-            raise ValueError("No text content provided to generate speech")
-
-        # Get speaker configuration and build full prompt
-        full_prompt = self._build_speech_prompt(clean_text, speaker_name)
-
-        # Generate audio data using the specific implementation
-        wav_bytes = self._generate_audio_data(full_prompt, speaker_name)
-
-        # Generate output filename if not provided
-        if output_filename is None:
-            # Create a simple hash-based filename including speed
-            import hashlib
-            hash_input = f"gemini_{speaker_name}_{full_prompt}_{self.speed_multiplier}"
-            text_hash = hashlib.sha256(hash_input.encode()).hexdigest()[:16]
-            output_filename = f"speech_{text_hash}"
-
-        output_path = self.output_dir / f"{output_filename}.mp3"
-        # Convert to MP3 and save
-        self._convert_to_mp3(wav_bytes, output_path)
-
-        return str(output_path)
-
     def generate_with_complete_prompt(self, speaker_name: str, complete_prompt: str, output_filename: str) -> str:
         """
         Generate speech audio from a complete prompt that bypasses internal prompt building.
@@ -167,25 +129,6 @@ class SpeechGenerator(ABC):
         self._convert_to_mp3(wav_bytes, output_path)
 
         return str(output_path)
-
-    def _build_speech_prompt(self, text: str, speaker_name: str) -> str:
-        """
-        Build the complete speech prompt including character-specific prefixes.
-
-        Args:
-            text: The base text to be spoken
-            speaker_name: Name of the speaker character
-
-        Returns:
-            Complete prompt for speech generation
-        """
-        if speaker_name not in self.characters:
-            # Use default if character not found
-            return text
-        else:
-            char_config = self.characters[speaker_name]
-            prompt_prefix = char_config['promptPrefix'] if 'promptPrefix' in char_config else ''
-            return f"{prompt_prefix} {text}".strip()
 
     def set_compression(self, bitrate: str) -> None:
         """

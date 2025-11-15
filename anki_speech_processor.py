@@ -283,7 +283,7 @@ class AnkiSpeechProcessor:
             for original, replacement in replacements:
                 text = text.replace(original, f'<phoneme alphabet="yomigana" ph="{replacement}">{original}</phoneme>')
 
-        # Line 2: Character prompt prefix (if exists)
+        # Line 1: Character prompt prefix (if exists)
         if speaker_name in self.speech_generator.characters:
             char_config = self.speech_generator.characters[speaker_name]
             prompt_prefix = char_config.get('promptPrefix', '')
@@ -295,12 +295,14 @@ class AnkiSpeechProcessor:
 
         # Line 3: Emotion directive (if emotion exists)
         if emotion and emotion.strip():
-            prompt_lines.append(f"{emotion}の感情で")
+            prompt_lines.append(f"、{emotion}の感情で")
 
-        # Line 4: Main directive (always included)
-        prompt_lines.append(text)
+        if len(prompt_lines) > 0:
+            prompt_lines.append(f"読み上げてください")
 
-        return '\n'.join(prompt_lines)
+        style_text = ''.join(prompt_lines)
+        style_text = style_text.rstrip(':：。、').strip()
+        return f"{style_text}：\n{text}" if style_text else text
 
     def _generate_audio_hash(self, card: Dict[str, Any]) -> str:
         """
