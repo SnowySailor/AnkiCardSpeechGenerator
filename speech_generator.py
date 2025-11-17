@@ -5,7 +5,7 @@ import wave
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from google import genai
 from google.genai import types
 from pydub import AudioSegment
@@ -90,6 +90,22 @@ class SpeechGenerator(ABC):
         finally:
             # Clean up temporary file
             os.unlink(temp_wav_path)
+
+    def wait_for_pending_batches(self) -> None:
+        """
+        Hook for providers that support batch requests to wait for any queued work.
+        Default implementation is a no-op.
+        """
+        return
+
+    def do_batch_request(self, batch_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Submit a batch request for multiple prompts. Providers that implement this
+        should return a list of dictionaries aligned with the input order. Each
+        dictionary should contain either an 'audio_data' key with WAV bytes or an
+        'error' key describing what went wrong for that entry.
+        """
+        raise NotImplementedError("Batch requests are not implemented for this provider")
 
     @abstractmethod
     def _generate_audio_data(self, text: str, speaker_name: str) -> bytes:
@@ -213,6 +229,10 @@ class GeminiSpeechGenerator(SpeechGenerator):
         # Round-robin counter
         self._client_index = 0
 
+        # Batch helpers
+        self.batch_display_prefix = "anki-speech-batch"
+        self.model_name = "gemini-2.5-pro-preview-tts"
+
         print(f"Initialized Gemini speech generator with {len(self.clients)} API key(s)")
 
     def _load_api_keys_from_file(self) -> list:
@@ -235,6 +255,38 @@ class GeminiSpeechGenerator(SpeechGenerator):
         self._client_index = (self._client_index + 1) % len(self.clients)
         return client
 
+    def _build_generate_config(self, voice_name: str) -> types.GenerateContentConfig:
+        return types.GenerateContentConfig(
+            response_modalities=["AUDIO"],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name=voice_name,
+                    )
+                )
+            ),
+        )
+
+    def _voice_for_speaker(self, speaker_name: str) -> str:
+        if speaker_name in self.characters:
+            return self.characters[speaker_name].get('speaker', 'Kore')
+        return 'Kore'
+
+    def _extract_audio_from_response(self, response: types.GenerateContentResponse) -> bytes:
+        if not response or not response.candidates:
+            raise RuntimeError("Gemini response did not include any candidates")
+
+        candidate = response.candidates[0]
+        if not candidate.content or not candidate.content.parts:
+            raise RuntimeError("Gemini response candidate did not include any parts")
+
+        for part in candidate.content.parts:
+            inline_data = getattr(part, "inline_data", None)
+            if inline_data and inline_data.data:
+                return inline_data.data
+
+        raise RuntimeError("Gemini response did not include inline audio data")
+
     def _generate_audio_data(self, text: str, speaker_name: str) -> bytes:
         """
         Generate audio data using Gemini's TTS API.
@@ -247,10 +299,7 @@ class GeminiSpeechGenerator(SpeechGenerator):
             WAV audio data as bytes
         """
         # Get voice configuration
-        if speaker_name in self.characters:
-            voice_name = self.characters[speaker_name]['speaker']
-        else:
-            voice_name = 'Kore'  # Default voice
+        voice_name = self._voice_for_speaker(speaker_name)
 
         print(f"    Final prompt: {text}")
 
@@ -260,22 +309,13 @@ class GeminiSpeechGenerator(SpeechGenerator):
             client = self.get_next_client()
             try:
                 response = client.models.generate_content(
-                    model="gemini-2.5-pro-preview-tts",
+                    model=self.model_name,
                     contents=text,
-                    config=types.GenerateContentConfig(
-                        response_modalities=["AUDIO"],
-                        speech_config=types.SpeechConfig(
-                            voice_config=types.VoiceConfig(
-                                prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                                    voice_name=voice_name,
-                                )
-                            )
-                        ),
-                    )
+                    config=self._build_generate_config(voice_name),
                 )
 
                 # Extract audio data
-                return response.candidates[0].content.parts[0].inline_data.data
+                return self._extract_audio_from_response(response)
 
             except Exception as e:
                 # Check if this is a 429 rate limit error
@@ -294,6 +334,98 @@ class GeminiSpeechGenerator(SpeechGenerator):
                 else:
                     # If not a rate limit error, or we've exhausted retries, raise the error
                     raise RuntimeError(f"Failed to generate speech with Gemini: {e}")
+
+    def _wait_for_batch_completion(self, client: genai.Client, job_name: str, poll_interval: float = 15.0) -> types.BatchJob:
+        """
+        Poll the Gemini API until the specified batch job finishes.
+        """
+        print(f"  ⏳ Waiting for batch job {job_name} to finish...")
+        while True:
+            job = client.batches.get(name=job_name)
+            state_name = job.state.name if job.state else "UNKNOWN"
+            print(f"    • Current state: {state_name}")
+            if job.done:
+                if state_name == "JOB_STATE_SUCCEEDED":
+                    print(f"  ✅ Batch job {job_name} completed successfully")
+                    return job
+                error_msg = job.error.message if job.error else "unknown error"
+                raise RuntimeError(f"Batch job {job_name} finished with state {state_name}: {error_msg}")
+            time.sleep(poll_interval)
+
+    def wait_for_pending_batches(self) -> None:
+        """
+        Check each configured Gemini client for pending batch jobs created by this tool
+        and wait until they are completed.
+        """
+        for idx, client in enumerate(self.clients, start=1):
+            try:
+                pager = client.batches.list()
+            except Exception as exc:
+                print(f"⚠️  Unable to list batches for API key #{idx}: {exc}")
+                continue
+
+            for job in pager:
+                if not job.display_name:
+                    continue
+                if not job.display_name.startswith(self.batch_display_prefix):
+                    continue
+                if job.done:
+                    continue
+                print(f"🔁 API key #{idx}: Pending Gemini batch '{job.display_name}' ({job.name}) detected")
+                self._wait_for_batch_completion(client, job.name)
+
+    def do_batch_request(self, batch_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not batch_entries:
+            return []
+
+        client = self.get_next_client()
+        inlined_requests: List[types.InlinedRequest] = []
+        for entry in batch_entries:
+            prompt = entry.get("prompt")
+            speaker_name = entry.get("speaker_name", "Narrator")
+            if not prompt or not prompt.strip():
+                raise ValueError("Batch entry missing prompt text")
+            voice_name = self._voice_for_speaker(speaker_name)
+
+            inlined_requests.append(
+                types.InlinedRequest(
+                    contents=prompt,
+                    config=self._build_generate_config(voice_name),
+                )
+            )
+
+        display_name = f"{self.batch_display_prefix}-{int(time.time())}"
+        print(f"\n📦 Creating Gemini batch job '{display_name}' with {len(inlined_requests)} requests...")
+        batch_job = client.batches.create(
+            model=self.model_name,
+            src=inlined_requests,
+            config=types.CreateBatchJobConfig(display_name=display_name),
+        )
+
+        completed_job = self._wait_for_batch_completion(client, batch_job.name)
+        dest = completed_job.dest
+        if not dest or not dest.inlined_responses:
+            raise RuntimeError("Batch job completed but no inline responses were returned")
+
+        inlined_responses = dest.inlined_responses
+        if len(inlined_responses) != len(batch_entries):
+            print("⚠️  Gemini returned a different number of responses than requested")
+
+        results: List[Dict[str, Any]] = []
+        for idx, inline_response in enumerate(inlined_responses):
+            if inline_response.error:
+                error_message = inline_response.error.message or str(inline_response.error)
+                results.append({"error": error_message})
+                continue
+
+            response = inline_response.response
+            try:
+                audio_bytes = self._extract_audio_from_response(response)
+                results.append({"audio_data": audio_bytes})
+            except Exception as exc:
+                results.append({"error": str(exc)})
+
+        return results
 
 
 # Factory function to create the default speech generator

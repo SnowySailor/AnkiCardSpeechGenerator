@@ -27,7 +27,8 @@ class AnkiSpeechProcessor:
                  audio_field: str = "Audio",
                  regenerate_audio_field: str = "Regenerate Audio",
                  keep_local_files: bool = False,
-                 replacements_file: str = "replacements.json"):
+                 replacements_file: str = "replacements.json",
+                 batch_mode: bool = False):
         """
         Initialize the Anki speech processor.
 
@@ -50,6 +51,7 @@ class AnkiSpeechProcessor:
         self.audio_field = audio_field
         self.regenerate_audio_field = regenerate_audio_field
         self.keep_local_files = keep_local_files
+        self.batch_mode = batch_mode
 
         # Load replacements
         self.replacements = self._load_replacements(replacements_file)
@@ -511,17 +513,79 @@ class AnkiSpeechProcessor:
             }
         })
 
-    def process_deck(self, deck_name: str, force_regenerate: bool = False) -> Dict[str, int]:
+    def _run_batch_generation(self, batch_entries: List[Dict[str, Any]], stats: Dict[str, int]) -> None:
+        """
+        Execute a batch generation request and handle uploading/storing results.
+        """
+        if not batch_entries:
+            return
+
+        print(f"\n🚚 Sending {len(batch_entries)} queued prompts to Gemini batch API...")
+        batch_results = self.speech_generator.do_batch_request(batch_entries)
+
+        if len(batch_results) != len(batch_entries):
+            print("⚠️  Gemini returned a different number of responses than requested; processing available pairs only.")
+
+        for entry, result in zip(batch_entries, batch_results):
+            card_id = entry.get("card_id")
+            note_id = entry.get("note_id", card_id)
+            audio_filename = entry.get("audio_filename")
+            should_clear = entry.get("clear_regenerate", False)
+
+            if result.get("error"):
+                print(f"  ❌ Batch error for card {card_id}: {result['error']}")
+                stats['errors'] += 1
+                continue
+
+            audio_bytes = result.get("audio_data")
+            if not audio_bytes:
+                print(f"  ❌ Batch error for card {card_id}: Missing audio data")
+                stats['errors'] += 1
+                continue
+
+            output_path = self.speech_generator.output_dir / audio_filename
+            self.speech_generator._convert_to_mp3(audio_bytes, output_path)
+            audio_path_str = str(output_path)
+
+            # Store audio file in Anki's media directory
+            self._store_audio_in_anki(audio_path_str, audio_filename)
+
+            # Update card
+            self._update_card_audio(note_id, audio_filename)
+
+            if should_clear:
+                self._clear_regenerate_field(note_id)
+
+            if not self.keep_local_files:
+                try:
+                    os.unlink(audio_path_str)
+                    print(f"  ✅ Batch generated and stored in Anki: [sound:{audio_filename}]")
+                except OSError:
+                    print(f"  ✅ Batch generated and stored in Anki: [sound:{audio_filename}] (local file cleanup failed)")
+            else:
+                print(f"  ✅ Batch generated and stored in Anki: [sound:{audio_filename}] (local copy kept: {audio_path_str})")
+
+            stats['processed'] += 1
+
+        if len(batch_entries) > len(batch_results):
+            missing = len(batch_entries) - len(batch_results)
+            stats['errors'] += missing
+            print(f"  ⚠️ Missing {missing} batch responses; counted as errors.")
+
+    def process_deck(self, deck_name: str, force_regenerate: bool = False, use_batch: Optional[bool] = None) -> Dict[str, int]:
         """
         Process all cards in a deck to generate speech audio.
 
         Args:
             deck_name: Name of the Anki deck to process
             force_regenerate: If True, regenerate all audio regardless of hash
+            use_batch: Overrides the processor batch mode for this invocation
 
         Returns:
             Statistics dictionary with counts
         """
+        batch_mode = self.batch_mode if use_batch is None else use_batch
+
         cards = self.get_deck_cards(deck_name)
 
         # Sort cards by cardId (creation timestamp) in descending order
@@ -534,6 +598,8 @@ class AnkiSpeechProcessor:
             'errors': 0,
             'no_sentence': 0
         }
+
+        batch_entries: List[Dict[str, Any]] = []
 
         for i, card in enumerate(cards, 1):
             try:
@@ -576,6 +642,22 @@ class AnkiSpeechProcessor:
 
                 # Generate audio using the complete prompt API to avoid double prompt processing
                 new_filename = f"speech_{new_hash}"
+                audio_filename = f"{new_filename}.mp3"
+                regenerate_value = fields.get(self.regenerate_audio_field, {}).get('value', '')
+                should_clear_regen = bool(regenerate_value and regenerate_value.strip())
+
+                if batch_mode:
+                    batch_entries.append({
+                        "prompt": final_prompt,
+                        "speaker_name": speaker_name,
+                        "card_id": card_id,
+                        "note_id": note_id,
+                        "audio_filename": audio_filename,
+                        "clear_regenerate": should_clear_regen,
+                    })
+                    print(f"  📨 Queued for batch request: [sound:{audio_filename}]")
+                    continue
+
                 audio_path = self.speech_generator.generate_with_complete_prompt(
                     speaker_name=speaker_name,
                     complete_prompt=final_prompt,
@@ -583,15 +665,13 @@ class AnkiSpeechProcessor:
                 )
 
                 # Store audio file in Anki's media directory
-                audio_filename = f"speech_{new_hash}.mp3"
                 self._store_audio_in_anki(audio_path, audio_filename)
 
                 # Update card in Anki
                 self._update_card_audio(note_id, audio_filename)
 
                 # Clear regenerate field if it was set
-                regenerate_value = fields.get(self.regenerate_audio_field, {}).get('value', '')
-                if regenerate_value and regenerate_value.strip():
+                if should_clear_regen:
                     self._clear_regenerate_field(note_id)
 
                 # Clean up local file if configured to do so
@@ -610,6 +690,10 @@ class AnkiSpeechProcessor:
                 print(f"  ❌ Error processing card {card_id}: {e}")
                 stats['errors'] += 1
                 continue
+
+        if batch_mode and batch_entries:
+            print(batch_entries)
+            self._run_batch_generation(batch_entries, stats)
 
         return stats
 

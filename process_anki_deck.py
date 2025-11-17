@@ -41,6 +41,8 @@ def main():
                        help='List all available decks and exit')
     parser.add_argument('--keep-local-files', action='store_true',
                        help='Keep local audio files after storing in Anki (default: delete local files)')
+    parser.add_argument('--batch-request', action='store_true',
+                       help='Use Gemini Batch API to submit all card requests at once')
 
     args = parser.parse_args()
 
@@ -57,6 +59,10 @@ def main():
             speed_multiplier=args.speed
         )
 
+        if args.batch_request:
+            print("⏳ Batch mode enabled: checking for pending Gemini batch jobs...")
+            speech_generator.wait_for_pending_batches()
+
         # Create processor
         processor = AnkiSpeechProcessor(
             speech_generator=speech_generator,
@@ -65,7 +71,8 @@ def main():
             emotion_field=args.emotion_field,
             audio_field=args.audio_field,
             keep_local_files=args.keep_local_files,
-            replacements_file=args.replacements
+            replacements_file=args.replacements,
+            batch_mode=args.batch_request
         )
 
         # List decks if requested
@@ -87,6 +94,7 @@ def main():
         print(f"📊 Provider: {args.provider}")
         print(f"🎵 Bitrate: {args.bitrate}")
         print(f"⏩ Speed: {args.speed}x ({args.speed*100:.0f}%)")
+        print(f"📦 Batch mode: {'Enabled' if args.batch_request else 'Disabled'}")
         print(f"📝 Sentence field: {args.sentence_field}")
         print(f"🎭 Speaker field: {args.speaker_field}")
         print(f"😊 Emotion field: {args.emotion_field}")
@@ -104,7 +112,7 @@ def main():
             return 0
 
         # Process the deck
-        stats = processor.process_deck(args.deck_name, force_regenerate=args.force)
+        stats = processor.process_deck(args.deck_name, force_regenerate=args.force, use_batch=args.batch_request)
         processor.print_statistics(stats)
 
         return 0
