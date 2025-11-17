@@ -4,8 +4,8 @@ import hashlib
 import requests
 import re
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
-from speech_generator import create_default_generator
+from typing import Dict, Any, List, Optional, Tuple, Set
+from speech_generator import create_default_generator, NO_AUDIO_RESPONSE
 from bs4 import BeautifulSoup
 
 class AnkiConnectError(Exception):
@@ -56,6 +56,10 @@ class AnkiSpeechProcessor:
         # Load replacements
         self.replacements = self._load_replacements(replacements_file)
 
+        # Failed hash tracking
+        self.failed_log_path = Path("failed_to_generate_log")
+        self.failed_hashes: Set[str] = self._load_failed_hashes()
+
         # Test AnkiConnect connection
         self._test_anki_connect()
 
@@ -80,6 +84,42 @@ class AnkiSpeechProcessor:
         except json.JSONDecodeError as e:
             print(f"Warning: Invalid JSON in {replacements_file}: {e}. Proceeding without replacements.")
             return {}
+
+    def _load_failed_hashes(self) -> Set[str]:
+        """
+        Load hashes that previously failed audio generation so we can skip them.
+        """
+        if not self.failed_log_path.exists():
+            return set()
+
+        try:
+            with open(self.failed_log_path, 'r', encoding='utf-8') as f:
+                return {line.strip() for line in f if line.strip()}
+        except OSError as exc:
+            print(f"Warning: Could not read failed hash log {self.failed_log_path}: {exc}")
+            return set()
+
+    def _record_failed_hash(self, hash_value: str) -> bool:
+        """
+        Record a hash that failed audio generation. Returns True if newly recorded.
+        """
+        if not hash_value or hash_value in self.failed_hashes:
+            return False
+
+        try:
+            with open(self.failed_log_path, 'a', encoding='utf-8') as f:
+                f.write(f"{hash_value}\n")
+            self.failed_hashes.add(hash_value)
+            return True
+        except OSError as exc:
+            print(f"Warning: Could not write failed hash log {self.failed_log_path}: {exc}")
+            return False
+
+    def _has_failed_before(self, hash_value: str) -> bool:
+        """
+        Check whether a hash has previously failed audio generation.
+        """
+        return hash_value in self.failed_hashes
 
     def _parse_source_field(self, source: str) -> Optional[Tuple[str, str, List[str]]]:
         """
@@ -530,10 +570,20 @@ class AnkiSpeechProcessor:
             card_id = entry.get("card_id")
             note_id = entry.get("note_id", card_id)
             audio_filename = entry.get("audio_filename")
+            audio_hash = self._extract_hash_from_filename(audio_filename)
             should_clear = entry.get("clear_regenerate", False)
 
-            if result.get("error"):
-                print(f"  ❌ Batch error for card {card_id}: {result['error']}")
+            error_value = result.get("error")
+            if error_value:
+                print(f"  ❌ Batch error for card {card_id}: {error_value}")
+                if error_value is NO_AUDIO_RESPONSE and audio_hash:
+                    if self._record_failed_hash(audio_hash):
+                        print(f"  📝 Logged hash {audio_hash} to {self.failed_log_path}")
+                stats['errors'] += 1
+                continue
+
+            if not result:
+                print(f"  ❌ Batch error for card {card_id}: Empty result returned")
                 stats['errors'] += 1
                 continue
 
@@ -626,6 +676,11 @@ class AnkiSpeechProcessor:
                     stats['no_sentence'] += 1
                     continue
 
+                if self._has_failed_before(new_hash):
+                    print(f"  ⚠️ Skipped: Hash {new_hash} previously failed to generate audio (see {self.failed_log_path})")
+                    stats['skipped'] += 1
+                    continue
+
                 # Extract card info
                 text = self._get_card_text(card)
                 speaker_name = fields.get(self.speaker_field, {}).get('value', 'Narrator')
@@ -663,6 +718,15 @@ class AnkiSpeechProcessor:
                     complete_prompt=final_prompt,
                     output_filename=new_filename
                 )
+
+                if audio_path is NO_AUDIO_RESPONSE:
+                    print("  ❌ Gemini returned no audio data for this card.")
+                    if self._record_failed_hash(new_hash):
+                        print(f"  📝 Logged hash {new_hash} to {self.failed_log_path}")
+                    else:
+                        print(f"  📝 Hash {new_hash} was already logged in {self.failed_log_path}")
+                    stats['errors'] += 1
+                    continue
 
                 # Store audio file in Anki's media directory
                 self._store_audio_in_anki(audio_path, audio_filename)

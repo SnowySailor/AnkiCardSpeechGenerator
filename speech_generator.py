@@ -5,11 +5,19 @@ import wave
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from google import genai
 from google.genai import types
 from pydub import AudioSegment
 from pydub.utils import which
+
+
+class _NoAudioResponse:
+    def __str__(self) -> str:
+        return "No audio response from Gemini"
+
+
+NO_AUDIO_RESPONSE = _NoAudioResponse()
 
 class SpeechGenerator(ABC):
     """
@@ -108,7 +116,7 @@ class SpeechGenerator(ABC):
         raise NotImplementedError("Batch requests are not implemented for this provider")
 
     @abstractmethod
-    def _generate_audio_data(self, text: str, speaker_name: str) -> bytes:
+    def _generate_audio_data(self, text: str, speaker_name: str) -> Union[bytes, _NoAudioResponse]:
         """
         Generate audio data from text. Must be implemented by subclasses.
 
@@ -117,11 +125,11 @@ class SpeechGenerator(ABC):
             speaker_name: Name of the speaker character
 
         Returns:
-            WAV audio data as bytes
+            WAV audio data as bytes, or NO_AUDIO_RESPONSE if no usable audio
         """
         pass
 
-    def generate_with_complete_prompt(self, speaker_name: str, complete_prompt: str, output_filename: str) -> str:
+    def generate_with_complete_prompt(self, speaker_name: str, complete_prompt: str, output_filename: str) -> Union[str, _NoAudioResponse]:
         """
         Generate speech audio from a complete prompt that bypasses internal prompt building.
 
@@ -131,7 +139,8 @@ class SpeechGenerator(ABC):
             output_filename: Optional custom filename (without extension). If None, generates based on hash.
 
         Returns:
-            Path to the generated MP3 audio file
+            Path to the generated MP3 audio file, or NO_AUDIO_RESPONSE if the
+            provider did not return usable audio content.
         """
 
         if not complete_prompt.strip():
@@ -139,6 +148,8 @@ class SpeechGenerator(ABC):
 
         # Generate audio data directly without additional prompt building
         wav_bytes = self._generate_audio_data(complete_prompt, speaker_name)
+        if wav_bytes is NO_AUDIO_RESPONSE:
+            return NO_AUDIO_RESPONSE
 
         output_path = self.output_dir / f"{output_filename}.mp3"
         # Convert to MP3 and save
@@ -272,22 +283,25 @@ class GeminiSpeechGenerator(SpeechGenerator):
             return self.characters[speaker_name].get('speaker', 'Kore')
         return 'Kore'
 
-    def _extract_audio_from_response(self, response: types.GenerateContentResponse) -> bytes:
+    def _extract_audio_from_response(self, response: types.GenerateContentResponse) -> Any:
         if not response or not response.candidates:
-            raise RuntimeError("Gemini response did not include any candidates")
+            print("    ❌ Gemini response did not include any candidates")
+            return NO_AUDIO_RESPONSE
 
         candidate = response.candidates[0]
         if not candidate.content or not candidate.content.parts:
-            raise RuntimeError("Gemini response candidate did not include any parts")
+            print("    ❌ Gemini response candidate did not include any parts")
+            return NO_AUDIO_RESPONSE
 
         for part in candidate.content.parts:
             inline_data = getattr(part, "inline_data", None)
             if inline_data and inline_data.data:
                 return inline_data.data
 
-        raise RuntimeError("Gemini response did not include inline audio data")
+        print("    ❌ Gemini response did not include inline audio data")
+        return NO_AUDIO_RESPONSE
 
-    def _generate_audio_data(self, text: str, speaker_name: str) -> bytes:
+    def _generate_audio_data(self, text: str, speaker_name: str) -> Union[bytes, _NoAudioResponse]:
         """
         Generate audio data using Gemini's TTS API.
 
@@ -419,11 +433,11 @@ class GeminiSpeechGenerator(SpeechGenerator):
                 continue
 
             response = inline_response.response
-            try:
-                audio_bytes = self._extract_audio_from_response(response)
-                results.append({"audio_data": audio_bytes})
-            except Exception as exc:
-                results.append({"error": str(exc)})
+            audio_bytes = self._extract_audio_from_response(response)
+            if audio_bytes is NO_AUDIO_RESPONSE:
+                results.append({"error": NO_AUDIO_RESPONSE})
+                continue
+            results.append({"audio_data": audio_bytes})
 
         return results
 
