@@ -43,6 +43,8 @@ def main():
                        help='Keep local audio files after storing in Anki (default: delete local files)')
     parser.add_argument('--batch-request', action='store_true',
                        help='Use Gemini Batch API to submit all card requests at once')
+    parser.add_argument('--ignore-failed-log', action='store_true',
+                        help='Ignore failed_to_generate_log and retry all cards')
 
     args = parser.parse_args()
 
@@ -100,6 +102,7 @@ def main():
         print(f"😊 Emotion field: {args.emotion_field}")
         print(f"🔊 Audio field: {args.audio_field}")
         print(f"📖 Replacements file: {args.replacements}")
+        print(f"🚫 Ignore failed log: {'Yes' if args.ignore_failed_log else 'No'}")
         print(f"💾 Keep local files: {'Yes' if args.keep_local_files else 'No'}")
 
         if args.force:
@@ -112,7 +115,12 @@ def main():
             return 0
 
         # Process the deck
-        stats = processor.process_deck(args.deck_name, force_regenerate=args.force, use_batch=args.batch_request)
+        stats = processor.process_deck(
+            args.deck_name,
+            force_regenerate=args.force,
+            use_batch=args.batch_request,
+            ignore_failed_log=args.ignore_failed_log
+        )
         processor.print_statistics(stats)
 
         return 0

@@ -121,6 +121,33 @@ class AnkiSpeechProcessor:
         """
         return hash_value in self.failed_hashes
 
+    def _remove_failed_hash(self, hash_value: str) -> bool:
+        """
+        Remove a hash from the failed log once generation succeeds.
+        """
+        if not hash_value or hash_value not in self.failed_hashes:
+            return False
+
+        try:
+            if self.failed_log_path.exists():
+                with open(self.failed_log_path, 'r', encoding='utf-8') as f:
+                    lines = [line.rstrip('\n') for line in f]
+
+                remaining = [line for line in lines if line.strip() and line.strip() != hash_value]
+
+                if remaining:
+                    with open(self.failed_log_path, 'w', encoding='utf-8') as f:
+                        for line in remaining:
+                            f.write(f"{line}\n")
+                else:
+                    self.failed_log_path.unlink()
+        except OSError as exc:
+            print(f"Warning: Could not update failed hash log {self.failed_log_path}: {exc}")
+            return False
+
+        self.failed_hashes.remove(hash_value)
+        return True
+
     def _parse_source_field(self, source: str) -> Optional[Tuple[str, str, List[str]]]:
         """
         Parse the Source field to extract manga title, volume, and pages.
@@ -571,6 +598,7 @@ class AnkiSpeechProcessor:
             note_id = entry.get("note_id", card_id)
             audio_filename = entry.get("audio_filename")
             audio_hash = self._extract_hash_from_filename(audio_filename)
+            previously_failed = entry.get("previously_failed", False)
             should_clear = entry.get("clear_regenerate", False)
 
             error_value = result.get("error")
@@ -615,6 +643,9 @@ class AnkiSpeechProcessor:
             else:
                 print(f"  ✅ Batch generated and stored in Anki: [sound:{audio_filename}] (local copy kept: {audio_path_str})")
 
+            if previously_failed and audio_hash and self._remove_failed_hash(audio_hash):
+                print(f"  🗑️ Removed hash {audio_hash} from {self.failed_log_path} (generation succeeded)")
+
             stats['processed'] += 1
 
         if len(batch_entries) > len(batch_results):
@@ -622,7 +653,11 @@ class AnkiSpeechProcessor:
             stats['errors'] += missing
             print(f"  ⚠️ Missing {missing} batch responses; counted as errors.")
 
-    def process_deck(self, deck_name: str, force_regenerate: bool = False, use_batch: Optional[bool] = None) -> Dict[str, int]:
+    def process_deck(self,
+                     deck_name: str,
+                     force_regenerate: bool = False,
+                     use_batch: Optional[bool] = None,
+                     ignore_failed_log: bool = False) -> Dict[str, int]:
         """
         Process all cards in a deck to generate speech audio.
 
@@ -630,6 +665,7 @@ class AnkiSpeechProcessor:
             deck_name: Name of the Anki deck to process
             force_regenerate: If True, regenerate all audio regardless of hash
             use_batch: Overrides the processor batch mode for this invocation
+            ignore_failed_log: If True, do not skip hashes recorded in the failed log
 
         Returns:
             Statistics dictionary with counts
@@ -676,10 +712,14 @@ class AnkiSpeechProcessor:
                     stats['no_sentence'] += 1
                     continue
 
-                if self._has_failed_before(new_hash):
-                    print(f"  ⚠️ Skipped: Hash {new_hash} previously failed to generate audio (see {self.failed_log_path})")
-                    stats['skipped'] += 1
-                    continue
+                previously_failed = self._has_failed_before(new_hash)
+                if previously_failed:
+                    if ignore_failed_log:
+                        print(f"  ⚠️ Hash {new_hash} was previously logged as failed, retrying because ignore flag is set.")
+                    else:
+                        print(f"  ⚠️ Skipped: Hash {new_hash} previously failed to generate audio (see {self.failed_log_path})")
+                        stats['skipped'] += 1
+                        continue
 
                 # Extract card info
                 text = self._get_card_text(card)
@@ -709,6 +749,7 @@ class AnkiSpeechProcessor:
                         "note_id": note_id,
                         "audio_filename": audio_filename,
                         "clear_regenerate": should_clear_regen,
+                        "previously_failed": previously_failed,
                     })
                     print(f"  📨 Queued for batch request: [sound:{audio_filename}]")
                     continue
@@ -747,6 +788,9 @@ class AnkiSpeechProcessor:
                         print(f"  ✅ Generated and stored in Anki: [sound:{audio_filename}] (local file cleanup failed)")
                 else:
                     print(f"  ✅ Generated and stored in Anki: [sound:{audio_filename}] (local copy kept: {audio_path})")
+
+                if previously_failed and self._remove_failed_hash(new_hash):
+                    print(f"  🗑️ Removed hash {new_hash} from {self.failed_log_path} (generation succeeded)")
 
                 stats['processed'] += 1
 
