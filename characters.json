@@ -119,5 +119,17 @@
   "rurim": {
     "speaker": "Despina",
     "promptPrefix": "やや低めの声で"
+  },
+  "rint": {
+    "speaker": "Enceladus",
+    "promptPrefix": "落ち着いてるカッコいい高校生みたいに"
+  },
+  "usami": {
+    "speaker": "Fenrir",
+    "promptPrefix": "元気でカッコいい高校生みたいに"
+  },
+  "waguri": {
+    "speaker": "Achernar",
+    "promptPrefix": "高く明るく元気なお嬢様の声で"
   }
 }
