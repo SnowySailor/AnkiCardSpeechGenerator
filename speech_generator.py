@@ -250,9 +250,15 @@ class GeminiSpeechGenerator(SpeechGenerator):
         return {"voice_name": voice_name}
 
     def _build_synthesis_input(self, style_prompt: Optional[str], text: str) -> texttospeech.SynthesisInput:
-        if style_prompt and style_prompt.strip():
-            return texttospeech.SynthesisInput(text=text, prompt=style_prompt.strip())
-        return texttospeech.SynthesisInput(text=text)
+        if "</phoneme>" in text:
+            ssml = f"<speak>{text}</speak>"
+            if style_prompt and style_prompt.strip():
+                return texttospeech.SynthesisInput(ssml=ssml, prompt=style_prompt.strip())
+            return texttospeech.SynthesisInput(ssml=ssml)
+        else:
+            if style_prompt and style_prompt.strip():
+                return texttospeech.SynthesisInput(text=text, prompt=style_prompt.strip())
+            return texttospeech.SynthesisInput(text=text)
 
     def _generate_audio_data(
         self,
