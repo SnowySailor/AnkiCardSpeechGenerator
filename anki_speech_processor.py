@@ -327,12 +327,9 @@ class AnkiSpeechProcessor:
             # No speaker configuration, just add emotion to default
             return f"{emotion}の感情でこれを言いなさい： {text}"
 
-    def _build_complete_prompt(self, text: str, speaker_name: str, emotion: str, card: Dict[str, Any]) -> str:
+    def _build_complete_prompt(self, text: str, speaker_name: str, emotion: str, card: Dict[str, Any]) -> Tuple[Optional[str], str]:
         """
-        Build the complete prompt in the desired format with pronunciation replacements:
-        Line 1: {character promptPrefix} (if exists)
-        Line 2: {emotion}の感情で (if emotion exists)
-        Line 3: これを言いなさい： {text} (always included)
+        Build the style prompt and spoken text (with pronunciation replacements applied).
 
         Args:
             text: The base text to be spoken
@@ -341,7 +338,7 @@ class AnkiSpeechProcessor:
             card: Anki card data (used to get Source field)
 
         Returns:
-            Complete prompt formatted for speech generation
+            Tuple of (style prompt string or None, spoken text)
         """
         prompt_lines = []
 
@@ -371,7 +368,8 @@ class AnkiSpeechProcessor:
 
         style_text = ''.join(prompt_lines)
         style_text = style_text.rstrip(':：。、').strip()
-        return f"{style_text}：\n{text}" if style_text else text
+        normalized_style = style_text if style_text else None
+        return normalized_style, text
 
     def _generate_audio_hash(self, card: Dict[str, Any]) -> str:
         """
@@ -732,8 +730,8 @@ class AnkiSpeechProcessor:
                 print(f"  🎭 Speaker: {speaker_name} ({emotion if emotion else 'No emotion'})")
                 print(f"  🔄 Generating audio...")
 
-                # Build complete prompt in the new 3-line format
-                final_prompt = self._build_complete_prompt(text, speaker_name, emotion, card)
+                # Build complete prompt components (style instructions + spoken text)
+                style_prompt, spoken_text = self._build_complete_prompt(text, speaker_name, emotion, card)
 
                 # Generate audio using the complete prompt API to avoid double prompt processing
                 new_filename = f"speech_{new_hash}"
@@ -743,7 +741,8 @@ class AnkiSpeechProcessor:
 
                 if batch_mode:
                     batch_entries.append({
-                        "prompt": final_prompt,
+                        "style_prompt": style_prompt,
+                        "text": spoken_text,
                         "speaker_name": speaker_name,
                         "card_id": card_id,
                         "note_id": note_id,
@@ -756,7 +755,8 @@ class AnkiSpeechProcessor:
 
                 audio_path = self.speech_generator.generate_with_complete_prompt(
                     speaker_name=speaker_name,
-                    complete_prompt=final_prompt,
+                    style_prompt=style_prompt,
+                    text=spoken_text,
                     output_filename=new_filename
                 )
 
