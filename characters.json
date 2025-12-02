@@ -121,7 +121,8 @@
     "promptPrefix": "やや低めの声で"
   },
   "rint": {
-    "speaker": "ja-JP-Chirp3-HD-Enceladus"
+    "speaker": "Enceladus",
+    "promptPrefix": "落ち着いてるカッコいい高校生みたいに"
   },
   "usami": {
     "speaker": "Fenrir",
@@ -132,7 +133,7 @@
     "promptPrefix": "高く明るく元気なお嬢様の声で"
   },
   "subaru": {
-    "speaker": "ja-JP-Chirp3-HD-Aoede"
+    "speaker": "Aoede"
   },
   "natsusawa": {
     "speaker": "Charon",

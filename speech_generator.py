@@ -4,7 +4,7 @@ import wave
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Tuple
 
 from google.cloud import texttospeech
 from pydub import AudioSegment
@@ -244,21 +244,22 @@ class GeminiSpeechGenerator(SpeechGenerator):
 
         print("Initialized Gemini speech generator using Cloud Text-to-Speech")
 
-    def _voice_settings_for_speaker(self, speaker_name: str) -> Dict[str, str]:
+    def _voice_settings_for_speaker(self, speaker_name: str, input_type: str) -> Dict[str, str]:
         char_config = self.characters.get(speaker_name, {})
         voice_name = char_config.get("speaker", "Kore")
+        voice_name = voice_name if input_type == 'text' else f"ja-JP-Chirp3-HD-{voice_name}"
         return {"voice_name": voice_name}
 
-    def _build_synthesis_input(self, style_prompt: Optional[str], text: str) -> texttospeech.SynthesisInput:
+    def _build_synthesis_input(self, style_prompt: Optional[str], text: str) -> Tuple[texttospeech.SynthesisInput, str]:
         if "</phoneme>" in text:
             ssml = f"<speak>{text}</speak>"
             if style_prompt and style_prompt.strip():
-                return texttospeech.SynthesisInput(ssml=ssml, prompt=style_prompt.strip())
-            return texttospeech.SynthesisInput(ssml=ssml)
+                return (texttospeech.SynthesisInput(ssml=ssml), 'ssml')
+            return (texttospeech.SynthesisInput(ssml=ssml), 'ssml')
         else:
             if style_prompt and style_prompt.strip():
-                return texttospeech.SynthesisInput(text=text, prompt=style_prompt.strip())
-            return texttospeech.SynthesisInput(text=text)
+                return (texttospeech.SynthesisInput(text=text, prompt=style_prompt.strip()), 'text')
+            return (texttospeech.SynthesisInput(text=text), 'text')
 
     def _generate_audio_data(
         self,
@@ -269,8 +270,8 @@ class GeminiSpeechGenerator(SpeechGenerator):
         """
         Generate audio data using Gemini's non-preview TTS model.
         """
-        voice_settings = self._voice_settings_for_speaker(speaker_name)
-        synthesis_input = self._build_synthesis_input(style_prompt, text)
+        synthesis_input, input_type = self._build_synthesis_input(style_prompt, text)
+        voice_settings = self._voice_settings_for_speaker(speaker_name, input_type)
 
         voice_params = texttospeech.VoiceSelectionParams(
             language_code="ja-JP",
