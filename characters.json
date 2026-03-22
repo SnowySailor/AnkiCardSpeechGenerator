@@ -138,5 +138,9 @@
   "natsusawa": {
     "speaker": "Charon",
     "promptPrefix": "低い声の落ち着いてる高校生みたいに"
+  },
+  "sta": {
+    "speaker": "Charon",
+    "promptPrefix": "なんかラフな感じで"
   }
 }
