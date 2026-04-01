@@ -22,11 +22,6 @@ def main() -> None:
     )
     parser.add_argument("deck_name", help="Name of the Anki deck to process")
     parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Regenerate audio even if the hash already matches",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Show which cards need audio without calling the TTS API",
@@ -47,7 +42,6 @@ def main() -> None:
         anki=anki,
         generator=generator,
         replacements_data=replacements_data,
-        force=args.force,
         dry_run=args.dry_run,
     )
     processor.run(args.deck_name)

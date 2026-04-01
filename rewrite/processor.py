@@ -78,13 +78,11 @@ class Processor:
         anki: AnkiClient,
         generator: AudioGenerator,
         replacements_data: dict,
-        force: bool = False,
         dry_run: bool = False,
     ):
         self.anki = anki
         self.generator = generator
         self.replacements_data = replacements_data
-        self.force = force
         self.dry_run = dry_run
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -108,7 +106,7 @@ class Processor:
 
         to_generate = [
             pc for pc in processable
-            if self.force or _needs_generation(pc)
+            if _needs_generation(pc)
         ]
         to_skip = len(processable) - len(to_generate)
 
