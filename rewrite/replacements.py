@@ -68,6 +68,24 @@ def get_applicable(
     return sorted(collected.items())
 
 
+def parse_card_replacements(field_value: str) -> list[tuple[str, str]]:
+    """Parse a card's Replacements field into (original, reading) pairs.
+
+    Format: "[search]:[pronunciation],[search]:[pronunciation]"
+    Spaces around commas are stripped.
+    """
+    if not field_value.strip():
+        return []
+    pairs = []
+    for item in field_value.split(","):
+        item = item.strip()
+        if ":" not in item:
+            continue
+        original, reading = item.split(":", 1)
+        pairs.append((original.strip(), reading.strip()))
+    return pairs
+
+
 def apply_ssml(clean_sentence: str, applicable: list[tuple[str, str]]) -> str:
     """Wrap matched words with SSML phoneme tags. Returns plain text if no replacements."""
     if not applicable:

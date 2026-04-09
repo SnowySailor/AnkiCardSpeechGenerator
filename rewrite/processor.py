@@ -11,6 +11,7 @@ SENTENCE_FIELD = "Expression"
 AUDIO_FIELD = "AI Audio"
 SOURCE_FIELD = "Source"
 REGENERATE_FIELD = "Regenerate Audio"
+CARD_REPLACEMENTS_FIELD = "Replacements"
 OUTPUT_DIR = Path(__file__).parent.parent / "audio_output"
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -49,6 +50,13 @@ def _build(card: dict, replacements_data: dict) -> ProcessableCard | None:
 
     source_value = _field(card, SOURCE_FIELD)
     applicable = rpl.get_applicable(replacements_data, clean_sentence, source_value)
+
+    card_replacements = rpl.parse_card_replacements(_field(card, CARD_REPLACEMENTS_FIELD))
+    if card_replacements:
+        merged = dict(applicable)
+        merged.update(card_replacements)
+        applicable = sorted(merged.items())
+
     ssml_text = rpl.apply_ssml(clean_sentence, applicable)
     audio_hash = hasher.compute(clean_sentence, applicable)
     audio_filename = f"speech_{audio_hash}.mp3"
