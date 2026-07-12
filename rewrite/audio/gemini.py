@@ -9,7 +9,7 @@ from pydub import AudioSegment
 from .base import AudioGenerator
 
 SPEAKER = "Kore"
-MODEL = "gemini-2.5-pro-tts"
+MODEL = "gemini-3.1-flash-tts-preview"
 SAMPLE_RATE = 24000
 BITRATE = "128k"
 SPEED = 1.0
