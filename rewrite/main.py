@@ -6,6 +6,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent.parent
 ENV_FILE = BASE_DIR / "env.json"
 REPLACEMENTS_FILE = BASE_DIR / "replacements.json"
+HINTS_FILE = BASE_DIR / "hints.json"
 
 
 def load_api_key() -> str:
@@ -35,6 +36,7 @@ def main() -> None:
 
     api_key = load_api_key()
     replacements_data = rpl.load(REPLACEMENTS_FILE)
+    hints_data = rpl.load(HINTS_FILE) if HINTS_FILE.exists() else {}
     anki = AnkiClient()
     generator = GeminiAudioGenerator(api_key)
 
@@ -42,6 +44,7 @@ def main() -> None:
         anki=anki,
         generator=generator,
         replacements_data=replacements_data,
+        hints_data=hints_data,
         dry_run=args.dry_run,
     )
     processor.run(args.deck_name)

@@ -68,8 +68,8 @@ def get_applicable(
     return sorted(collected.items())
 
 
-def parse_card_replacements(field_value: str) -> list[tuple[str, str]]:
-    """Parse a card's Replacements field into (original, reading) pairs.
+def parse_pairs(field_value: str) -> list[tuple[str, str]]:
+    """Parse a card field (Replacements or Hints) into (original, reading) pairs.
 
     Format: "[search]:[pronunciation],[search]:[pronunciation]"
     Spaces around commas are stripped.
@@ -86,11 +86,30 @@ def parse_card_replacements(field_value: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def apply_readings(clean_sentence: str, applicable: list[tuple[str, str]]) -> str:
+    """Hard-substitute each matched word with its kana reading in the spoken text.
+
+    Gemini TTS has no phoneme override and a natural-language prompt can't reliably
+    beat the model's lexical prior (e.g. 明日→あす, 曲が→まが). Replacing the surface
+    form with kana removes the kanji entirely, so the reading is deterministic.
+
+    Longest originals are substituted first so compound names (e.g. 明日小路) are
+    consumed before their overlapping sub-parts (明日, 小路), which would otherwise
+    clobber the compound. Readings are kana, so they never reintroduce a kanji
+    original and can't cascade into a later substitution. Returns the sentence
+    unchanged when there are no replacements.
+    """
+    text = clean_sentence
+    for original, reading in sorted(applicable, key=lambda pair: len(pair[0]), reverse=True):
+        text = text.replace(original, reading)
+    return text
+
+
 def build_pronunciation_prompt(applicable: list[tuple[str, str]]) -> str:
     """Japanese steering prompt telling the Gemini TTS voice which readings to use.
 
-    Returned as the `prompt` field on SynthesisInput: it steers delivery but is
-    never spoken. Empty string when there are no replacements (plain synthesis).
+    Used for soft Hints: returned as the `prompt` field on SynthesisInput, it steers
+    delivery but is never spoken. Empty string when there are no hints (plain synthesis).
     """
     if not applicable:
         return ""
