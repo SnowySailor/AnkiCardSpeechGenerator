@@ -86,14 +86,17 @@ def parse_card_replacements(field_value: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def apply_ssml(clean_sentence: str, applicable: list[tuple[str, str]]) -> str:
-    """Wrap matched words with SSML phoneme tags. Returns plain text if no replacements."""
+def build_pronunciation_prompt(applicable: list[tuple[str, str]]) -> str:
+    """Japanese steering prompt telling the Gemini TTS voice which readings to use.
+
+    Returned as the `prompt` field on SynthesisInput: it steers delivery but is
+    never spoken. Empty string when there are no replacements (plain synthesis).
+    """
     if not applicable:
-        return clean_sentence
-    text = clean_sentence
-    for original, reading in applicable:
-        text = text.replace(
-            original,
-            f'<phoneme alphabet="yomigana" ph="{reading}">{original}</phoneme>',
-        )
-    return text
+        return ""
+    lines = "\n".join(f"・「{original}」は「{reading}」と読む" for original, reading in applicable)
+    return (
+        "以下の文章を、自然で落ち着いたナレーションとして一度だけ読み上げてください。"
+        "次の語句は必ず指定の読み方で発音してください（一般的な読みと異なる場合も指定を優先）：\n"
+        f"{lines}"
+    )

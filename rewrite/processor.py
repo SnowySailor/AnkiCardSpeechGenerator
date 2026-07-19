@@ -31,7 +31,7 @@ class ProcessableCard:
     card_id: int
     clean_sentence: str
     applicable_replacements: list[tuple[str, str]]
-    ssml_text: str
+    prompt: str
     audio_hash: str
     audio_filename: str
     current_audio_value: str
@@ -57,7 +57,7 @@ def _build(card: dict, replacements_data: dict) -> ProcessableCard | None:
         merged.update(card_replacements)
         applicable = sorted(merged.items())
 
-    ssml_text = rpl.apply_ssml(clean_sentence, applicable)
+    prompt = rpl.build_pronunciation_prompt(applicable)
     audio_hash = hasher.compute(clean_sentence, applicable)
     audio_filename = f"speech_{audio_hash}.mp3"
     current_audio_value = _field(card, AUDIO_FIELD)
@@ -68,7 +68,7 @@ def _build(card: dict, replacements_data: dict) -> ProcessableCard | None:
         card_id=card["cardId"],
         clean_sentence=clean_sentence,
         applicable_replacements=applicable,
-        ssml_text=ssml_text,
+        prompt=prompt,
         audio_hash=audio_hash,
         audio_filename=audio_filename,
         current_audio_value=current_audio_value,
@@ -122,14 +122,14 @@ class Processor:
 
         if self.dry_run:
             for pc in to_generate:
-                print(f"  [dry-run] {pc.audio_filename}  {pc.ssml_text[:60]}")
+                print(f"  [dry-run] {pc.audio_filename}  {pc.clean_sentence[:60]}")
             return
 
         for i, pc in enumerate(to_generate, 1):
             prefix = f"[{i}/{len(to_generate)}]"
-            print(f"{prefix} {pc.ssml_text[:60]}")
+            print(f"{prefix} {pc.clean_sentence[:60]}")
             try:
-                mp3_bytes = self.generator.generate(pc.ssml_text)
+                mp3_bytes = self.generator.generate(pc.clean_sentence, pc.prompt)
             except Exception as e:
                 print(f"  ERROR generating audio: {e}")
                 continue

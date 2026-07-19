@@ -1,7 +1,7 @@
 import hashlib
 import json
 
-HASH_VERSION = 1
+HASH_VERSION = 2
 SPEAKER = "Kore"
 PROVIDER = "GeminiAudioGenerator"
 BITRATE = "128k"
