@@ -38,20 +38,16 @@ class GeminiAudioGenerator(AudioGenerator):
     def __init__(self, api_key: str):
         self._client = _make_client(api_key)
 
-    def generate(self, text: str) -> bytes:
-        if "</phoneme>" in text:
-            synthesis_input = texttospeech.SynthesisInput(ssml=f"<speak>{text}</speak>")
-            voice = texttospeech.VoiceSelectionParams(
-                language_code="ja-JP",
-                name=f"ja-JP-Chirp3-HD-{SPEAKER}",
-            )
+    def generate(self, text: str, prompt: str = "") -> bytes:
+        if prompt:
+            synthesis_input = texttospeech.SynthesisInput(text=text, prompt=prompt)
         else:
             synthesis_input = texttospeech.SynthesisInput(text=text)
-            voice = texttospeech.VoiceSelectionParams(
-                language_code="ja-JP",
-                name=SPEAKER,
-                model_name=MODEL,
-            )
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="ja-JP",
+            name=SPEAKER,
+            model_name=MODEL,
+        )
         audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,
             sample_rate_hertz=SAMPLE_RATE,

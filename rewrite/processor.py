@@ -12,6 +12,7 @@ AUDIO_FIELD = "AI Audio"
 SOURCE_FIELD = "Source"
 REGENERATE_FIELD = "Regenerate Audio"
 CARD_REPLACEMENTS_FIELD = "Replacements"
+CARD_HINTS_FIELD = "Reading Hints"
 OUTPUT_DIR = Path(__file__).parent.parent / "audio_output"
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -31,14 +32,30 @@ class ProcessableCard:
     card_id: int
     clean_sentence: str
     applicable_replacements: list[tuple[str, str]]
-    ssml_text: str
+    applicable_hints: list[tuple[str, str]]
+    spoken_text: str
+    prompt: str
     audio_hash: str
     audio_filename: str
     current_audio_value: str
     force_regenerate: bool
 
 
-def _build(card: dict, replacements_data: dict) -> ProcessableCard | None:
+def _resolve(
+    scoped: list[tuple[str, str]], card_field: str
+) -> list[tuple[str, str]]:
+    """Merge JSON-scoped pairs with a card field's pairs (card wins), sorted."""
+    card_pairs = rpl.parse_pairs(card_field)
+    if not card_pairs:
+        return scoped
+    merged = dict(scoped)
+    merged.update(card_pairs)
+    return sorted(merged.items())
+
+
+def _build(
+    card: dict, replacements_data: dict, hints_data: dict
+) -> ProcessableCard | None:
     """Build a ProcessableCard from a raw AnkiConnect card dict.
 
     Returns None if the sentence is empty.
@@ -49,16 +66,27 @@ def _build(card: dict, replacements_data: dict) -> ProcessableCard | None:
         return None
 
     source_value = _field(card, SOURCE_FIELD)
-    applicable = rpl.get_applicable(replacements_data, clean_sentence, source_value)
 
-    card_replacements = rpl.parse_card_replacements(_field(card, CARD_REPLACEMENTS_FIELD))
-    if card_replacements:
-        merged = dict(applicable)
-        merged.update(card_replacements)
-        applicable = sorted(merged.items())
+    # Hard replacements: substitute the reading into the spoken text (kanji removed).
+    replacements = _resolve(
+        rpl.get_applicable(replacements_data, clean_sentence, source_value),
+        _field(card, CARD_REPLACEMENTS_FIELD),
+    )
+    spoken_text = rpl.apply_readings(clean_sentence, replacements)
 
-    ssml_text = rpl.apply_ssml(clean_sentence, applicable)
-    audio_hash = hasher.compute(clean_sentence, applicable)
+    # Soft hints: nudge pronunciation via the prompt. Drop any hint whose word was
+    # already substituted away, so it can't contradict a replacement in the prompt.
+    hints = [
+        (original, reading)
+        for original, reading in _resolve(
+            rpl.get_applicable(hints_data, clean_sentence, source_value),
+            _field(card, CARD_HINTS_FIELD),
+        )
+        if original in spoken_text
+    ]
+    prompt = rpl.build_pronunciation_prompt(hints)
+
+    audio_hash = hasher.compute(clean_sentence, replacements, hints)
     audio_filename = f"speech_{audio_hash}.mp3"
     current_audio_value = _field(card, AUDIO_FIELD)
     force_regenerate = bool(_field(card, REGENERATE_FIELD).strip())
@@ -67,8 +95,10 @@ def _build(card: dict, replacements_data: dict) -> ProcessableCard | None:
         note_id=card["note"],
         card_id=card["cardId"],
         clean_sentence=clean_sentence,
-        applicable_replacements=applicable,
-        ssml_text=ssml_text,
+        applicable_replacements=replacements,
+        applicable_hints=hints,
+        spoken_text=spoken_text,
+        prompt=prompt,
         audio_hash=audio_hash,
         audio_filename=audio_filename,
         current_audio_value=current_audio_value,
@@ -86,11 +116,13 @@ class Processor:
         anki: AnkiClient,
         generator: AudioGenerator,
         replacements_data: dict,
+        hints_data: dict,
         dry_run: bool = False,
     ):
         self.anki = anki
         self.generator = generator
         self.replacements_data = replacements_data
+        self.hints_data = hints_data
         self.dry_run = dry_run
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -103,7 +135,7 @@ class Processor:
         processable = []
         skipped_empty = 0
         for raw in raw_cards:
-            pc = _build(raw, self.replacements_data)
+            pc = _build(raw, self.replacements_data, self.hints_data)
             if pc is None:
                 skipped_empty += 1
             else:
@@ -122,14 +154,14 @@ class Processor:
 
         if self.dry_run:
             for pc in to_generate:
-                print(f"  [dry-run] {pc.audio_filename}  {pc.ssml_text[:60]}")
+                print(f"  [dry-run] {pc.audio_filename}  {pc.spoken_text[:60]}")
             return
 
         for i, pc in enumerate(to_generate, 1):
             prefix = f"[{i}/{len(to_generate)}]"
-            print(f"{prefix} {pc.ssml_text[:60]}")
+            print(f"{prefix} {pc.spoken_text[:60]}")
             try:
-                mp3_bytes = self.generator.generate(pc.ssml_text)
+                mp3_bytes = self.generator.generate(pc.spoken_text, pc.prompt)
             except Exception as e:
                 print(f"  ERROR generating audio: {e}")
                 continue

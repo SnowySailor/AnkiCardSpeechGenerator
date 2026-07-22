@@ -68,8 +68,8 @@ def get_applicable(
     return sorted(collected.items())
 
 
-def parse_card_replacements(field_value: str) -> list[tuple[str, str]]:
-    """Parse a card's Replacements field into (original, reading) pairs.
+def parse_pairs(field_value: str) -> list[tuple[str, str]]:
+    """Parse a card field (Replacements or Hints) into (original, reading) pairs.
 
     Format: "[search]:[pronunciation],[search]:[pronunciation]"
     Spaces around commas are stripped.
@@ -86,14 +86,36 @@ def parse_card_replacements(field_value: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def apply_ssml(clean_sentence: str, applicable: list[tuple[str, str]]) -> str:
-    """Wrap matched words with SSML phoneme tags. Returns plain text if no replacements."""
-    if not applicable:
-        return clean_sentence
+def apply_readings(clean_sentence: str, applicable: list[tuple[str, str]]) -> str:
+    """Hard-substitute each matched word with its kana reading in the spoken text.
+
+    Gemini TTS has no phoneme override and a natural-language prompt can't reliably
+    beat the model's lexical prior (e.g. 明日→あす, 曲が→まが). Replacing the surface
+    form with kana removes the kanji entirely, so the reading is deterministic.
+
+    Longest originals are substituted first so compound names (e.g. 明日小路) are
+    consumed before their overlapping sub-parts (明日, 小路), which would otherwise
+    clobber the compound. Readings are kana, so they never reintroduce a kanji
+    original and can't cascade into a later substitution. Returns the sentence
+    unchanged when there are no replacements.
+    """
     text = clean_sentence
-    for original, reading in applicable:
-        text = text.replace(
-            original,
-            f'<phoneme alphabet="yomigana" ph="{reading}">{original}</phoneme>',
-        )
+    for original, reading in sorted(applicable, key=lambda pair: len(pair[0]), reverse=True):
+        text = text.replace(original, reading)
     return text
+
+
+def build_pronunciation_prompt(applicable: list[tuple[str, str]]) -> str:
+    """Japanese steering prompt telling the Gemini TTS voice which readings to use.
+
+    Used for soft Hints: returned as the `prompt` field on SynthesisInput, it steers
+    delivery but is never spoken. Empty string when there are no hints (plain synthesis).
+    """
+    if not applicable:
+        return ""
+    lines = "\n".join(f"・「{original}」は「{reading}」と読む" for original, reading in applicable)
+    return (
+        "以下の文章を、自然で落ち着いたナレーションとして一度だけ読み上げてください。"
+        "次の語句は必ず指定の読み方で発音してください（一般的な読みと異なる場合も指定を優先）：\n"
+        f"{lines}"
+    )
