@@ -98,7 +98,70 @@ Field names are constants at the top of `processor.py`.
 | `Replacements` | no | Per-card hard replacements: `search:reading,search:reading`. |
 | `Reading Hints` | no | Per-card soft hints, same format. |
 
+### Configuring the fields in Anki
+
+Add the fields to the note type you mine into — **Tools → Manage Note Types →** select the
+type **→ Fields… → Add**. Names must match exactly, including capitalization and the space
+in `AI Audio` and `Regenerate Audio`; the lookup is a literal dictionary hit, not a fuzzy
+match. Adding fields is non-destructive, and the four optional ones can be left out
+entirely — a field that doesn't exist reads as empty.
+
+The two required ones fail in different, quiet ways if they're wrong:
+
+- **No `Expression`** (or it's named something else) — every card reads as an empty
+  sentence and is skipped. You'll see `Skipped N cards with empty sentences.` and nothing
+  will be generated.
+- **No `AI Audio`** — audio is synthesized, but AnkiConnect rejects the write-back and
+  each card logs `ERROR updating Anki`. The run continues to the end, so this can burn a
+  lot of API calls before you notice.
+
+Run `--dry-run` first on any new note type. It catches an `Expression` mismatch for free —
+the skip count will equal the card count and you'll get `0 need audio generation` — but it
+can't catch an `AI Audio` mismatch, since it never reaches the write-back. Confirm that
+field name by eye.
+
+Then reference the field in your card template (**Cards…**) so the audio actually plays
+during review:
+
+```
+{{Expression}}
+{{AI Audio}}
+```
+
+Leave `AI Audio` for the tool to manage — each run overwrites the whole field value, so
+anything else you put there is lost. If you already keep audio from another source, give
+this a separate field rather than sharing one.
+
+To use your existing field names instead of these, edit the constants at the top of
+`processor.py`. Only field *values* are hashed, never their names, so renaming is free —
+no rehash, no mass regeneration.
+
+### Filling in the optional fields
+
+`Source` is what makes scoped replacements work — without it, only the top-level `*`
+entries apply. Format it as `SERIES VOLUME PAGES`, e.g. `INS V1 P11,12`.
+
+`Regenerate Audio` takes any non-empty value (`1`, `y`, `x` — nothing parses it), and the
+tool clears it once the card succeeds, so it works as a one-shot checkbox you can set on a
+batch of cards from the browser.
+
+`Replacements` and `Reading Hints` both take `written:reading` pairs separated by commas —
+`曲:マガリ,兎子:ウサコ`. Items without a colon are ignored, and whitespace around the
+commas and colons is stripped. Use these for one-off cards; anything recurring belongs in
+the JSON files so it applies everywhere.
+
+### One caveat on deck selection
+
+Cards are found with `deck:"<name>"`, and the tool works per *card*, not per *note*. If
+your note type produces more than one card per note, each note is synthesized once per
+card — same sentence, same hash, same output filename, so the result is correct, but you
+pay for the duplicate TTS calls. Mining decks are usually one card per note; if yours
+isn't, be aware the card count in the output is higher than the number of distinct
+sentences.
+
 ## Setup
+
+Requires Python 3.10 or newer.
 
 ```bash
 pip install -r requirements.txt
@@ -137,9 +200,10 @@ python main.py "Mining"
 There are no other flags. To force a rebuild of one card, set its `Regenerate Audio`
 field; to force a rebuild of everything, bump `HASH_VERSION` in `hasher.py`.
 
-Every generated file is also written to a local `audio_output/` cache alongside the copy
-stored in Anki's media collection (`OUTPUT_DIR` in `processor.py` currently resolves it
-one directory *above* the project root).
+Every generated file is written twice: into Anki's media collection via `storeMediaFile`,
+and into a local `audio_output/` cache in the project root (git-ignored). The local copy
+isn't read back — regeneration is decided from the note's `AI Audio` field — so it's safe
+to delete if it gets large.
 
 ## Layout
 

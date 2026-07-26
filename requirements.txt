@@ -1,5 +1,6 @@
-google-genai>=0.7.0
+# 2.29.0 is the first release with SynthesisInput.prompt, used for Gemini-TTS steering.
+google-cloud-texttospeech>=2.29.0
 pydub>=0.25.1
 requests>=2.25.0
-pathlib2>=2.3.7; python_version<"3.4"
-audioop-lts
+# pydub imports the stdlib audioop module, which was removed in Python 3.13.
+audioop-lts>=0.2.2; python_version >= "3.13"
