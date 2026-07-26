@@ -15,7 +15,7 @@ BITRATE = "128k"
 SPEED = 1.0
 
 
-def _make_client(api_key: str) -> texttospeech.TextToSpeechClient:
+def _make_client() -> texttospeech.TextToSpeechClient:
     from google.api_core import client_options as client_options_lib
 
     opts = client_options_lib.ClientOptions(
@@ -35,8 +35,8 @@ def _pcm_to_wav(pcm: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
 
 
 class GeminiAudioGenerator(AudioGenerator):
-    def __init__(self, api_key: str):
-        self._client = _make_client(api_key)
+    def __init__(self):
+        self._client = _make_client()
 
     def generate(self, text: str, prompt: str = "") -> bytes:
         if prompt:

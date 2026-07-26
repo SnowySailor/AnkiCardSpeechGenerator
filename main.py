@@ -8,14 +8,6 @@ REPLACEMENTS_FILE = Path("./replacements.json")
 HINTS_FILE = Path("./hints.json")
 
 
-def load_api_key() -> str:
-    try:
-        with open(ENV_FILE) as f:
-            return json.load(f)["geminiApiKey"]
-    except (FileNotFoundError, KeyError) as e:
-        sys.exit(f"Could not load API key from {ENV_FILE}: {e}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Generate TTS audio for Anki cards and store them via AnkiConnect."
@@ -33,11 +25,10 @@ def main() -> None:
     from audio.gemini import GeminiAudioGenerator
     from processor import Processor
 
-    api_key = load_api_key()
     replacements_data = rpl.load(REPLACEMENTS_FILE)
     hints_data = rpl.load(HINTS_FILE) if HINTS_FILE.exists() else {}
     anki = AnkiClient()
-    generator = GeminiAudioGenerator(api_key)
+    generator = GeminiAudioGenerator()
 
     processor = Processor(
         anki=anki,
