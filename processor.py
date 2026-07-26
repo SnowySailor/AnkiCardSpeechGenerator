@@ -13,7 +13,7 @@ SOURCE_FIELD = "Source"
 REGENERATE_FIELD = "Regenerate Audio"
 CARD_REPLACEMENTS_FIELD = "Replacements"
 CARD_HINTS_FIELD = "Reading Hints"
-OUTPUT_DIR = Path(__file__).parent.parent / "audio_output"
+OUTPUT_DIR = Path(__file__).parent / "audio_output"
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 

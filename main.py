@@ -3,7 +3,6 @@ import json
 import sys
 from pathlib import Path
 
-ENV_FILE = Path("./env.json")
 REPLACEMENTS_FILE = Path("./replacements.json")
 HINTS_FILE = Path("./hints.json")
 
