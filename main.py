@@ -3,10 +3,9 @@ import json
 import sys
 from pathlib import Path
 
-BASE_DIR = Path(__file__).parent.parent
-ENV_FILE = BASE_DIR / "env.json"
-REPLACEMENTS_FILE = BASE_DIR / "replacements.json"
-HINTS_FILE = BASE_DIR / "hints.json"
+ENV_FILE = Path("./env.json")
+REPLACEMENTS_FILE = Path("./replacements.json")
+HINTS_FILE = Path("./hints.json")
 
 
 def load_api_key() -> str:
