@@ -33,8 +33,9 @@ For each card in the deck:
    16-character digest → `speech_<hash>.mp3`.
 5. If that hash isn't already in the note's `AI Audio` field (or `Regenerate Audio` is
    set), synthesize, store the media in Anki, and point `AI Audio` at the new file.
-   Synthesis runs on Gemini's half-price Flex tier, many requests at a time; each card is
-   written back as soon as its audio arrives.
+   By default synthesis runs on Gemini's half-price Flex tier, many requests at a time;
+   each card is written back as soon as its audio arrives. `--mode batch` sends them as
+   one Batch API job instead (see [Batch](#batch)).
 
 ## Replacements vs. hints
 
@@ -197,13 +198,17 @@ python main.py "Mining" --dry-run
 
 # Generate and write back
 python main.py "Mining"
+
+# Same, as one half-price batch job (can take hours; avoids Flex's daily cap)
+python main.py "Mining" --mode batch
 ```
 
 | Flag | Effect |
 |---|---|
 | `--dry-run` | List what would be generated; no API calls. |
-| `--workers N` | TTS requests in flight at once (default 10). |
-| `--standard` | Use the full-price Standard tier instead of Flex. |
+| `--mode M` | `flex` (default), `standard` (full price, seconds per card), or `batch`. |
+| `--workers N` | Flex/standard: TTS requests in flight at once (default 10). |
+| `--limit N` | Generate at most N cards this run, e.g. to stay under a daily quota. |
 
 To force a rebuild of one card, set its `Regenerate Audio` field; to force a rebuild of everything, bump `HASH_VERSION` in `hasher.py`.
 
@@ -232,25 +237,49 @@ flight at once, so a large backlog still moves quickly even though each card is 
   abandoned and counted as failed so the run can finish. Its thread can't be killed, so it
   keeps its worker slot until the run ends, and the run exits with status 1. If every
   worker ends up held this way, the remaining queued cards are skipped for the next run.
-- Flex shares your normal rate limits. If you see many 429s, lower `--workers`.
-- For a quick fix to one or two cards, `--standard` returns in seconds at full price.
+- Flex shares your normal rate limits, which on Tier 1 for this model are 10 requests a
+  minute and 100 a day. If you see many 429s, lower `--workers`; for more than ~100
+  cards, use `--mode batch` or `--limit`.
+- For a quick fix to one or two cards, `--mode standard` returns in seconds at full price.
 - Ctrl-C exits immediately. Every card that already finished is in Anki, so a re-run
   only picks up the rest. Requests that were still in flight are billed but discarded.
 
-The tier doesn't affect the audio, so switching between Flex and Standard doesn't change
-any hashes or trigger regeneration.
+The tier doesn't affect the audio, so switching between modes doesn't change any hashes
+or trigger regeneration.
+
+### Batch
+
+`--mode batch` submits every card that needs audio as one Batch API job, also billed at
+50% of Standard. Batch has its own limits (concurrent jobs and queued tokens) rather than
+Flex's per-day request cap, so a large backlog goes through in one go. In exchange, Google
+targets finishing within 24 hours (usually much sooner), and a job still unfinished after
+48 hours expires.
+
+- Cards that share a sentence (same hash) are sent once and the audio is written to all
+  of them.
+- After submitting, a live panel shows the job's state, polled every 30 seconds. When it
+  finishes, the deck is re-read and each result is written to every card that still
+  needs that audio. A card edited since submission has a new hash, so its result is
+  skipped and the card goes in the next job.
+- The job is recorded in `batch_state.json` (git-ignored) as soon as it's submitted.
+  Ctrl-C stops waiting but leaves the job running; re-running the same command resumes
+  it instead of submitting again. Cards added in the meantime wait for the next job.
+- A failed, cancelled or expired job is reported and forgotten, so the next run submits
+  again. If results arrive but saving to Anki fails, the job is kept so a re-run can
+  retry the saves without paying again (results stay downloadable for 6 weeks).
 
 ## Layout
 
 | File | Role |
 |---|---|
 | `main.py` | CLI entry point; wires up the client, generator, and processor |
-| `processor.py` | Builds `ProcessableCard`s, decides what needs audio, runs generation in a thread pool and writes back as results arrive |
+| `processor.py` | Builds `ProcessableCard`s, decides what needs audio, runs generation in a thread pool (flex/standard) or as a batch job, and writes back as results arrive |
 | `anki.py` | `AnkiClient` — AnkiConnect JSON-RPC, with `cardsInfo` batched 500 at a time |
 | `replacements.py` | Loading, `Source` parsing, scope resolution, substitution, prompt building |
 | `hasher.py` | Content hash that decides staleness |
 | `audio/base.py` | `AudioGenerator` ABC: `generate(text, prompt) -> bytes` |
-| `audio/gemini.py` | Gemini API implementation (`gemini-3.8-flash-tts`, Flex tier with retry/backoff); WAV → MP3 128k via pydub |
+| `audio/gemini.py` | Gemini API implementation (`gemini-3.8-flash-tts`, Flex tier with retry/backoff); WAV/PCM → MP3 128k via pydub |
+| `audio/gemini_batch.py` | Batch API route: builds the JSONL job, polls it, and decodes results |
 | `replacements.json` | Hard replacement data |
 | `hints.json` | Soft hint data |
 

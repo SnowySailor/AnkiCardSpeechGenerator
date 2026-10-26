@@ -1,8 +1,7 @@
 import base64
 import io
-import os
 import random
-import tempfile
+import re
 import time
 from typing import Callable
 
@@ -50,6 +49,30 @@ def _fmt_wait(seconds: float) -> str:
     return f"{seconds / 60:.0f}m" if seconds >= 120 else f"{seconds:.0f}s"
 
 
+def to_mp3(audio_bytes: bytes, mime_type: str = "") -> bytes:
+    """Convert Gemini TTS audio to MP3.
+
+    Interactions returns WAV (RIFF header, 24 kHz mono 16-bit); generateContent,
+    which the batch route uses, returns raw PCM such as
+    "audio/L16;codec=pcm;rate=24000".
+    """
+    if audio_bytes[:4] == b"RIFF":
+        audio = AudioSegment.from_wav(io.BytesIO(audio_bytes))
+    else:
+        rate = re.search(r"rate=(\d+)", mime_type)
+        audio = AudioSegment(
+            data=audio_bytes,
+            sample_width=2,
+            frame_rate=int(rate.group(1)) if rate else 24000,
+            channels=1,
+        )
+    if SPEED != 1.0:
+        audio = audio.speedup(playback_speed=SPEED)
+    buf = io.BytesIO()
+    audio.export(buf, format="mp3", bitrate=BITRATE)
+    return buf.getvalue()
+
+
 class GeminiAudioGenerator(AudioGenerator):
     def __init__(self, api_key: str, service_tier: str = SERVICE_TIER):
         self._service_tier = service_tier
@@ -75,9 +98,7 @@ class GeminiAudioGenerator(AudioGenerator):
 
         interaction = self._create(content, on_status or (lambda _: None))
 
-        # Unary responses are WAV (RIFF header, 24 kHz mono 16-bit) by default.
-        wav_bytes = base64.b64decode(interaction.output_audio.data)
-        return self._to_mp3(wav_bytes)
+        return to_mp3(base64.b64decode(interaction.output_audio.data))
 
     def _create(self, content: dict, on_status: Callable[[str], None]):
         deadline = time.monotonic() + CARD_DEADLINE_S
@@ -120,17 +141,3 @@ class GeminiAudioGenerator(AudioGenerator):
                 on_status(f"{status or 'timeout'}, retrying in {_fmt_wait(delay)} "
                           f"({attempt + 1}/{MAX_ATTEMPTS - 1})")
                 time.sleep(delay)
-
-    def _to_mp3(self, wav_bytes: bytes) -> bytes:
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            f.write(wav_bytes)
-            tmp_path = f.name
-        try:
-            audio = AudioSegment.from_wav(tmp_path)
-            if SPEED != 1.0:
-                audio = audio.speedup(playback_speed=SPEED)
-            buf = io.BytesIO()
-            audio.export(buf, format="mp3", bitrate=BITRATE)
-            return buf.getvalue()
-        finally:
-            os.unlink(tmp_path)

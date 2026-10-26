@@ -196,3 +196,4 @@ cython_debug/
 audio_output
 .DS_Store
 env.json
+batch_state.json

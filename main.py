@@ -27,36 +27,49 @@ def main() -> None:
         help="Show which cards need audio without calling the TTS API",
     )
     parser.add_argument(
+        "--mode",
+        choices=["flex", "standard", "batch"],
+        default="flex",
+        help="flex: half price, live, minutes per card (default). "
+        "standard: full price, seconds per card. "
+        "batch: half price, one job that can take hours; avoids flex's daily cap",
+    )
+    parser.add_argument(
         "--workers",
         type=int,
         default=10,
-        help="Number of TTS requests in flight at once (default: 10)",
+        help="Flex/standard only: TTS requests in flight at once (default: 10)",
     )
     parser.add_argument(
-        "--standard",
-        action="store_true",
-        help="Use the full-price standard tier instead of flex (faster per request)",
+        "--limit",
+        type=int,
+        help="Generate at most this many cards this run",
     )
     args = parser.parse_args()
 
     import replacements as rpl
     from anki import AnkiClient
     from audio.gemini import GeminiAudioGenerator
+    from audio.gemini_batch import GeminiBatch
     from processor import Processor
 
     replacements_data = rpl.load(REPLACEMENTS_FILE)
     hints_data = rpl.load(HINTS_FILE) if HINTS_FILE.exists() else {}
     anki = AnkiClient()
-    generator = GeminiAudioGenerator(
-        load_api_key(), service_tier="standard" if args.standard else "flex"
-    )
+    api_key = load_api_key()
+    if args.mode == "batch":
+        generator, batch = None, GeminiBatch(api_key)
+    else:
+        generator, batch = GeminiAudioGenerator(api_key, service_tier=args.mode), None
 
     processor = Processor(
         anki=anki,
         generator=generator,
+        batch=batch,
         replacements_data=replacements_data,
         hints_data=hints_data,
         workers=args.workers,
+        limit=args.limit,
         dry_run=args.dry_run,
     )
     processor.run(args.deck_name)
