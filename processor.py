@@ -1,4 +1,6 @@
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -117,12 +119,14 @@ class Processor:
         generator: AudioGenerator,
         replacements_data: dict,
         hints_data: dict,
+        workers: int = 1,
         dry_run: bool = False,
     ):
         self.anki = anki
         self.generator = generator
         self.replacements_data = replacements_data
         self.hints_data = hints_data
+        self.workers = workers
         self.dry_run = dry_run
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -157,29 +161,51 @@ class Processor:
                 print(f"  [dry-run] {pc.audio_filename}  {pc.spoken_text[:60]}")
             return
 
-        for i, pc in enumerate(to_generate, 1):
-            prefix = f"[{i}/{len(to_generate)}]"
-            print(f"{prefix} {pc.spoken_text[:60]}")
-            try:
-                mp3_bytes = self.generator.generate(pc.spoken_text, pc.prompt)
-            except Exception as e:
-                print(f"  ERROR generating audio: {e}")
-                continue
+        # Generation runs in worker threads; file and AnkiConnect writes stay on
+        # this thread, so each card is saved as soon as its audio arrives.
+        total = len(to_generate)
+        written = failed = 0
+        executor = ThreadPoolExecutor(max_workers=self.workers)
+        futures = {
+            executor.submit(self.generator.generate, pc.spoken_text, pc.prompt): pc
+            for pc in to_generate
+        }
+        print(f"Generating with {self.workers} workers; results arrive as each finishes.")
+        try:
+            for done, future in enumerate(as_completed(futures), 1):
+                pc = futures[future]
+                prefix = f"[{done}/{total}]"
+                try:
+                    mp3_bytes = future.result()
+                except Exception as e:
+                    print(f"{prefix} ERROR generating audio for {pc.spoken_text[:40]}: {e}")
+                    failed += 1
+                    continue
 
-            output_path = OUTPUT_DIR / pc.audio_filename
-            output_path.write_bytes(mp3_bytes)
+                output_path = OUTPUT_DIR / pc.audio_filename
+                output_path.write_bytes(mp3_bytes)
 
-            try:
-                self.anki.store_media_file(pc.audio_filename, mp3_bytes)
-                self.anki.update_note_field(
-                    pc.note_id, AUDIO_FIELD, f"[sound:{pc.audio_filename}]"
-                )
-                if pc.force_regenerate:
-                    self.anki.update_note_field(pc.note_id, REGENERATE_FIELD, "")
-            except Exception as e:
-                print(f"  ERROR updating Anki: {e}")
-                continue
+                try:
+                    self.anki.store_media_file(pc.audio_filename, mp3_bytes)
+                    self.anki.update_note_field(
+                        pc.note_id, AUDIO_FIELD, f"[sound:{pc.audio_filename}]"
+                    )
+                    if pc.force_regenerate:
+                        self.anki.update_note_field(pc.note_id, REGENERATE_FIELD, "")
+                except Exception as e:
+                    print(f"{prefix} ERROR updating Anki for {pc.spoken_text[:40]}: {e}")
+                    failed += 1
+                    continue
 
-            print(f"  -> {pc.audio_filename}")
+                print(f"{prefix} {pc.audio_filename}  {pc.spoken_text[:60]}")
+                written += 1
+        except KeyboardInterrupt:
+            executor.shutdown(wait=False, cancel_futures=True)
+            dropped = total - written - failed
+            print(f"\nInterrupted: {written} written, {failed} failed, {dropped} dropped.")
+            # Skip waiting on in-flight requests, which can take up to the
+            # request timeout; everything finished is already in Anki.
+            os._exit(130)
 
-        print("Done.")
+        executor.shutdown()
+        print(f"Done: {written} written, {failed} failed.")

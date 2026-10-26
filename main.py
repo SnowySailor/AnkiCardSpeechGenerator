@@ -26,6 +26,17 @@ def main() -> None:
         action="store_true",
         help="Show which cards need audio without calling the TTS API",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=10,
+        help="Number of TTS requests in flight at once (default: 10)",
+    )
+    parser.add_argument(
+        "--standard",
+        action="store_true",
+        help="Use the full-price standard tier instead of flex (faster per request)",
+    )
     args = parser.parse_args()
 
     import replacements as rpl
@@ -36,13 +47,16 @@ def main() -> None:
     replacements_data = rpl.load(REPLACEMENTS_FILE)
     hints_data = rpl.load(HINTS_FILE) if HINTS_FILE.exists() else {}
     anki = AnkiClient()
-    generator = GeminiAudioGenerator(load_api_key())
+    generator = GeminiAudioGenerator(
+        load_api_key(), service_tier="standard" if args.standard else "flex"
+    )
 
     processor = Processor(
         anki=anki,
         generator=generator,
         replacements_data=replacements_data,
         hints_data=hints_data,
+        workers=args.workers,
         dry_run=args.dry_run,
     )
     processor.run(args.deck_name)

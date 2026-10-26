@@ -33,6 +33,8 @@ For each card in the deck:
    16-character digest → `speech_<hash>.mp3`.
 5. If that hash isn't already in the note's `AI Audio` field (or `Regenerate Audio` is
    set), synthesize, store the media in Anki, and point `AI Audio` at the new file.
+   Synthesis runs on Gemini's half-price Flex tier, many requests at a time; each card is
+   written back as soon as its audio arrives.
 
 ## Replacements vs. hints
 
@@ -155,7 +157,7 @@ the JSON files so it applies everywhere.
 Cards are found with `deck:"<name>"`, and the tool works per *card*, not per *note*. If
 your note type produces more than one card per note, each note is synthesized once per
 card — same sentence, same hash, same output filename, so the result is correct, but you
-pay for the duplicate TTS calls. Mining decks are usually one card per note; if yours
+pay for the duplicate TTS calls (they now run in parallel, but the cost is the same). Mining decks are usually one card per note; if yours
 isn't, be aware the card count in the output is higher than the number of distinct
 sentences.
 
@@ -197,25 +199,48 @@ python main.py "Mining" --dry-run
 python main.py "Mining"
 ```
 
-There are no other flags. To force a rebuild of one card, set its `Regenerate Audio`
-field; to force a rebuild of everything, bump `HASH_VERSION` in `hasher.py`.
+| Flag | Effect |
+|---|---|
+| `--dry-run` | List what would be generated; no API calls. |
+| `--workers N` | TTS requests in flight at once (default 10). |
+| `--standard` | Use the full-price Standard tier instead of Flex. |
+
+To force a rebuild of one card, set its `Regenerate Audio` field; to force a rebuild of everything, bump `HASH_VERSION` in `hasher.py`.
 
 Every generated file is written twice: into Anki's media collection via `storeMediaFile`,
 and into a local `audio_output/` cache in the project root (git-ignored). The local copy
 isn't read back — regeneration is decided from the note's `AI Audio` field — so it's safe
 to delete if it gets large.
 
+### Cost and speed
+
+Requests go to Gemini's **Flex** tier, billed at 50% of the Standard rate. In exchange,
+each request can take minutes rather than seconds, and Google may reject requests (429 or
+503) when it's busy. Throughput comes from concurrency: `--workers` requests are in
+flight at once, so a large backlog still moves quickly even though each card is slow.
+
+- Rejected requests are retried with exponential backoff (5 attempts, starting at ~5s).
+  If they still fail, the card is logged as an error and left for the next run — nothing
+  is silently retried at full price.
+- Flex shares your normal rate limits. If you see many 429s, lower `--workers`.
+- For a quick fix to one or two cards, `--standard` returns in seconds at full price.
+- Ctrl-C exits immediately. Every card that already finished is in Anki, so a re-run
+  only picks up the rest. Requests that were still in flight are billed but discarded.
+
+The tier doesn't affect the audio, so switching between Flex and Standard doesn't change
+any hashes or trigger regeneration.
+
 ## Layout
 
 | File | Role |
 |---|---|
 | `main.py` | CLI entry point; wires up the client, generator, and processor |
-| `processor.py` | Builds `ProcessableCard`s, decides what needs audio, drives generation and write-back |
+| `processor.py` | Builds `ProcessableCard`s, decides what needs audio, runs generation in a thread pool and writes back as results arrive |
 | `anki.py` | `AnkiClient` — AnkiConnect JSON-RPC, with `cardsInfo` batched 500 at a time |
 | `replacements.py` | Loading, `Source` parsing, scope resolution, substitution, prompt building |
 | `hasher.py` | Content hash that decides staleness |
 | `audio/base.py` | `AudioGenerator` ABC: `generate(text, prompt) -> bytes` |
-| `audio/gemini.py` | Gemini API implementation (`gemini-3.8-flash-tts`); WAV → MP3 128k via pydub |
+| `audio/gemini.py` | Gemini API implementation (`gemini-3.8-flash-tts`, Flex tier with retry/backoff); WAV → MP3 128k via pydub |
 | `replacements.json` | Hard replacement data |
 | `hints.json` | Soft hint data |
 
