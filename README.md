@@ -224,7 +224,9 @@ flight at once, so a large backlog still moves quickly even though each card is 
   and its retry countdown). Finished cards scroll by above it. Waits turn yellow after
   15 minutes and red after 30.
 - Rejected or timed-out requests are retried with exponential backoff (5 attempts,
-  starting at ~5s), within a 30-minute budget per card. If they still fail, the card is
+  starting at ~5s), within a 30-minute budget per card. If Gemini says how long to wait,
+  that wait is used instead; a wait longer than the budget fails the card immediately
+  instead of sleeping on it. If they still fail, the card is
   logged as an error and left for the next run — nothing is silently retried at full price.
 - A card with no answer after 45 minutes (for example, the machine slept mid-request) is
   abandoned and counted as failed so the run can finish. Its thread can't be killed, so it

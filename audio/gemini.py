@@ -30,6 +30,27 @@ BASE_DELAY_S = 5
 RETRYABLE_STATUS = {429, 503}
 
 
+def _retry_after_s(e: Exception) -> float | None:
+    """The wait a 429/503 asked for, if it sent one.
+
+    The SDK used to sleep on retry-after-ms itself, uncapped and silently; with
+    its retries off, we honor it here instead, within CARD_DEADLINE_S.
+    """
+    headers = getattr(getattr(e, "response", None), "headers", None) or {}
+    try:
+        if "retry-after-ms" in headers:
+            return float(headers["retry-after-ms"]) / 1000
+        if "retry-after" in headers:
+            return float(headers["retry-after"])
+    except ValueError:
+        pass  # e.g. an HTTP-date retry-after; fall back to our own backoff
+    return None
+
+
+def _fmt_wait(seconds: float) -> str:
+    return f"{seconds / 60:.0f}m" if seconds >= 120 else f"{seconds:.0f}s"
+
+
 class GeminiAudioGenerator(AudioGenerator):
     def __init__(self, api_key: str, service_tier: str = SERVICE_TIER):
         self._service_tier = service_tier
@@ -83,13 +104,22 @@ class GeminiAudioGenerator(AudioGenerator):
                 if (status not in RETRYABLE_STATUS and not timed_out) \
                         or attempt == MAX_ATTEMPTS - 1:
                     raise
-                delay = BASE_DELAY_S * 2**attempt + random.uniform(0, BASE_DELAY_S)
+                requested = _retry_after_s(e)
+                if requested is not None:
+                    delay = requested
+                else:
+                    delay = BASE_DELAY_S * 2**attempt + random.uniform(0, BASE_DELAY_S)
                 if time.monotonic() + delay >= deadline:
+                    if requested is not None:
+                        raise TimeoutError(
+                            f"{status}: Gemini asked to wait {_fmt_wait(requested)}, "
+                            f"past the {CARD_DEADLINE_S // 60} min budget"
+                        ) from e
                     raise TimeoutError(
                         f"gave up after {CARD_DEADLINE_S // 60} min "
                         f"({attempt + 1} attempts)"
                     ) from e
-                on_status(f"{status or 'timeout'}, retrying in {delay:.0f}s "
+                on_status(f"{status or 'timeout'}, retrying in {_fmt_wait(delay)} "
                           f"({attempt + 1}/{MAX_ATTEMPTS - 1})")
                 time.sleep(delay)
 
