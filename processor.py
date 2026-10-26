@@ -171,6 +171,11 @@ class _Tracker:
         with self._lock:
             self._items.pop(key, None)
 
+    def stuck(self) -> int:
+        """Workers still held by abandoned cards."""
+        with self._lock:
+            return sum(item.abandoned for item in self._items.values())
+
     def elapsed(self, key: int) -> float | None:
         with self._lock:
             item = self._items.get(key)
@@ -242,7 +247,7 @@ class Processor:
         console = Console(highlight=False)
         tracker = _Tracker()
         total = len(to_generate)
-        written = failed = abandoned = 0
+        written = failed = abandoned = skipped = 0
         executor = ThreadPoolExecutor(max_workers=self.workers)
         pending = {
             executor.submit(self._generate_one, tracker, key, pc): (key, pc)
@@ -336,6 +341,19 @@ class Processor:
                             f"{pc.spoken_text[:40]}")
                         failed += 1
                         abandoned += 1
+
+                    # With every worker held by an abandoned card, nothing queued
+                    # can ever start; skip the rest rather than wait forever.
+                    if pending and tracker.stuck() >= self.workers:
+                        for future in pending:
+                            future.cancel()
+                        skipped = len(pending)
+                        pending.clear()
+                        console.print(Text.assemble(
+                            ("ERROR", "bold red"),
+                            f" all {self.workers} workers are stuck; skipped "
+                            f"{skipped} queued cards. Re-run to pick them up.",
+                        ))
         except KeyboardInterrupt:
             executor.shutdown(wait=False, cancel_futures=True)
             dropped = total - written - failed
@@ -344,7 +362,8 @@ class Processor:
             # request timeout; everything finished is already in Anki.
             os._exit(130)
 
-        console.print(f"Done: {written} written, {failed} failed.")
+        summary = f"Done: {written} written, {failed} failed"
+        console.print(summary + (f", {skipped} skipped." if skipped else "."))
         if abandoned:
             # Abandoned requests still occupy worker threads, which the
             # interpreter would otherwise wait on at exit.

@@ -230,7 +230,8 @@ flight at once, so a large backlog still moves quickly even though each card is 
   logged as an error and left for the next run — nothing is silently retried at full price.
 - A card with no answer after 45 minutes (for example, the machine slept mid-request) is
   abandoned and counted as failed so the run can finish. Its thread can't be killed, so it
-  keeps its worker slot until the run ends, and the run exits with status 1.
+  keeps its worker slot until the run ends, and the run exits with status 1. If every
+  worker ends up held this way, the remaining queued cards are skipped for the next run.
 - Flex shares your normal rate limits. If you see many 429s, lower `--workers`.
 - For a quick fix to one or two cards, `--standard` returns in seconds at full price.
 - Ctrl-C exits immediately. Every card that already finished is in Anki, so a re-run

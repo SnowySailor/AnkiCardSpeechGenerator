@@ -8,7 +8,6 @@ from typing import Callable
 
 import httpx
 from google import genai
-from google.genai import types
 from pydub import AudioSegment
 
 from .base import AudioGenerator
@@ -33,8 +32,8 @@ RETRYABLE_STATUS = {429, 503}
 def _retry_after_s(e: Exception) -> float | None:
     """The wait a 429/503 asked for, if it sent one.
 
-    The SDK used to sleep on retry-after-ms itself, uncapped and silently; with
-    its retries off, we honor it here instead, within CARD_DEADLINE_S.
+    With the SDK's retries off, we honor it here instead of the SDK sleeping on
+    it uncapped, but only within CARD_DEADLINE_S.
     """
     headers = getattr(getattr(e, "response", None), "headers", None) or {}
     try:
@@ -54,15 +53,14 @@ def _fmt_wait(seconds: float) -> str:
 class GeminiAudioGenerator(AudioGenerator):
     def __init__(self, api_key: str, service_tier: str = SERVICE_TIER):
         self._service_tier = service_tier
-        # Turn the SDK's own retries off: they run silently and each one can
-        # wait a full timeout, so all retrying happens in _create, where it's
-        # reported and bounded by CARD_DEADLINE_S.
-        self._client = genai.Client(
-            api_key=api_key,
-            http_options=types.HttpOptions(
-                retry_options=types.HttpRetryOptions(attempts=0),
-            ),
-        )
+        self._client = genai.Client(api_key=api_key)
+        # Turn the SDK's own retries off: they run silently and sleep on
+        # retry-after-ms uncapped (it once held every worker for over an hour),
+        # so all retrying happens in _create, where it's reported and bounded by
+        # CARD_DEADLINE_S. HttpRetryOptions can't do this (the client clamps
+        # attempts=0 up to 1) and create() won't take a per-call retries=, so
+        # clear the interactions client's default instead.
+        self._client.interactions.sdk_configuration.retry_config = None
 
     def generate(
         self,
@@ -113,7 +111,7 @@ class GeminiAudioGenerator(AudioGenerator):
                     if requested is not None:
                         raise TimeoutError(
                             f"{status}: Gemini asked to wait {_fmt_wait(requested)}, "
-                            f"past the {CARD_DEADLINE_S // 60} min budget"
+                            f"past the {CARD_DEADLINE_S // 60} min budget ({e})"
                         ) from e
                     raise TimeoutError(
                         f"gave up after {CARD_DEADLINE_S // 60} min "
