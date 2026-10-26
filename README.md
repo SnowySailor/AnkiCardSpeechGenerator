@@ -219,9 +219,16 @@ each request can take minutes rather than seconds, and Google may reject request
 503) when it's busy. Throughput comes from concurrency: `--workers` requests are in
 flight at once, so a large backlog still moves quickly even though each card is slow.
 
-- Rejected requests are retried with exponential backoff (5 attempts, starting at ~5s).
-  If they still fail, the card is logged as an error and left for the next run — nothing
-  is silently retried at full price.
+- While it runs, a live panel at the bottom of the terminal lists the requests in flight,
+  oldest first, with how long each has waited and its current state (waiting, or a 429/503
+  and its retry countdown). Finished cards scroll by above it. Waits turn yellow after
+  15 minutes and red after 30.
+- Rejected or timed-out requests are retried with exponential backoff (5 attempts,
+  starting at ~5s), within a 30-minute budget per card. If they still fail, the card is
+  logged as an error and left for the next run — nothing is silently retried at full price.
+- A card with no answer after 45 minutes (for example, the machine slept mid-request) is
+  abandoned and counted as failed so the run can finish. Its thread can't be killed, so it
+  keeps its worker slot until the run ends, and the run exits with status 1.
 - Flex shares your normal rate limits. If you see many 429s, lower `--workers`.
 - For a quick fix to one or two cards, `--standard` returns in seconds at full price.
 - Ctrl-C exits immediately. Every card that already finished is in Anki, so a re-run
