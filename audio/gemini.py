@@ -1,67 +1,38 @@
+import base64
 import io
 import os
 import tempfile
-import wave
 
-from google.cloud import texttospeech
+from google import genai
 from pydub import AudioSegment
 
 from .base import AudioGenerator
 
 SPEAKER = "Kore"
-MODEL = "gemini-3.1-flash-tts-preview"
-SAMPLE_RATE = 24000
+MODEL = "gemini-3.8-flash-tts"
 BITRATE = "128k"
 SPEED = 1.0
 
 
-def _make_client() -> texttospeech.TextToSpeechClient:
-    from google.api_core import client_options as client_options_lib
-
-    opts = client_options_lib.ClientOptions(
-        api_endpoint="texttospeech.googleapis.com",
-    )
-    return texttospeech.TextToSpeechClient(client_options=opts)
-
-
-def _pcm_to_wav(pcm: bytes, sample_rate: int = SAMPLE_RATE) -> bytes:
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)  # 16-bit = 2 bytes
-        wf.setframerate(sample_rate)
-        wf.writeframes(pcm)
-    return buf.getvalue()
-
-
 class GeminiAudioGenerator(AudioGenerator):
-    def __init__(self):
-        self._client = _make_client()
+    def __init__(self, api_key: str):
+        self._client = genai.Client(api_key=api_key)
 
     def generate(self, text: str, prompt: str = "") -> bytes:
+        # 3.8 TTS speaks the text verbatim; steering goes in speech_metadata.style.
+        content = {"type": "text", "text": text}
         if prompt:
-            synthesis_input = texttospeech.SynthesisInput(text=text, prompt=prompt)
-        else:
-            synthesis_input = texttospeech.SynthesisInput(text=text)
-        voice = texttospeech.VoiceSelectionParams(
-            language_code="ja-JP",
-            name=SPEAKER,
-            model_name=MODEL,
-        )
-        audio_config = texttospeech.AudioConfig(
-            audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-            sample_rate_hertz=SAMPLE_RATE,
+            content["annotations"] = [{"type": "speech_metadata", "style": prompt}]
+
+        interaction = self._client.interactions.create(
+            model=MODEL,
+            input=[{"type": "user_input", "content": [content]}],
+            response_format={"type": "audio"},
+            generation_config={"speech_config": [{"voice": SPEAKER}]},
         )
 
-        response = self._client.synthesize_speech(
-            request=texttospeech.SynthesizeSpeechRequest(
-                input=synthesis_input,
-                voice=voice,
-                audio_config=audio_config,
-            )
-        )
-
-        wav_bytes = _pcm_to_wav(response.audio_content)
+        # Unary responses are WAV (RIFF header, 24 kHz mono 16-bit) by default.
+        wav_bytes = base64.b64decode(interaction.output_audio.data)
         return self._to_mp3(wav_bytes)
 
     def _to_mp3(self, wav_bytes: bytes) -> bytes:

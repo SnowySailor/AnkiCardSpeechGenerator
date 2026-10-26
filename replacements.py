@@ -108,7 +108,7 @@ def apply_readings(clean_sentence: str, applicable: list[tuple[str, str]]) -> st
 def build_pronunciation_prompt(applicable: list[tuple[str, str]]) -> str:
     """Japanese steering prompt telling the Gemini TTS voice which readings to use.
 
-    Used for soft Hints: returned as the `prompt` field on SynthesisInput, it steers
+    Used for soft Hints: sent as `speech_metadata.style` on the text, it steers
     delivery but is never spoken. Empty string when there are no hints (plain synthesis).
     """
     if not applicable:

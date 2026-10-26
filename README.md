@@ -41,7 +41,7 @@ ways. This is the central design decision in the project.
 
 | | **Replacements** (`replacements.json`) | **Hints** (`hints.json`) |
 |---|---|---|
-| Mechanism | Text is rewritten before synthesis — the kanji never reaches the model | Passed as a natural-language `prompt` alongside the text |
+| Mechanism | Text is rewritten before synthesis — the kanji never reaches the model | Passed as natural-language `speech_metadata.style` alongside the text |
 | Reliability | Deterministic | Best-effort; the model may ignore it |
 | Prosody | Can flatten pitch accent, since the model only sees kana | Preserved — the model still sees the real sentence |
 | Use for | Names and readings the model reliably gets wrong (`曲` → `マガリ`) | Nudges where the default reading is merely likely-wrong (`色黒` → `いろぐろ`) |
@@ -168,13 +168,13 @@ pip install -r requirements.txt
 brew install ffmpeg          # pydub needs it for MP3 export
 ```
 
-**Google Cloud Text-to-Speech.** Audio comes from the Gemini TTS model
-(`gemini-3.1-flash-tts-preview`) via the Cloud TTS API, which authenticates with
-Application Default Credentials — not an API key:
+**Gemini API.** Audio comes from the Gemini TTS model (`gemini-3.8-flash-tts`) via the
+Gemini API. (3.8 isn't available through Cloud Text-to-Speech.) Get an API key from
+[Google AI Studio](https://aistudio.google.com/apikey) and put it in `env.json` in the
+project root (git-ignored):
 
-```bash
-gcloud auth application-default login
-gcloud services enable texttospeech.googleapis.com
+```json
+{ "geminiApiKey": "..." }
 ```
 
 **AnkiConnect.** Install add-on `2055492159` (Tools → Add-ons → Get Add-ons), restart
@@ -215,7 +215,7 @@ to delete if it gets large.
 | `replacements.py` | Loading, `Source` parsing, scope resolution, substitution, prompt building |
 | `hasher.py` | Content hash that decides staleness |
 | `audio/base.py` | `AudioGenerator` ABC: `generate(text, prompt) -> bytes` |
-| `audio/gemini.py` | Cloud TTS implementation; LINEAR16 24 kHz → WAV → MP3 128k via pydub |
+| `audio/gemini.py` | Gemini API implementation (`gemini-3.8-flash-tts`); WAV → MP3 128k via pydub |
 | `replacements.json` | Hard replacement data |
 | `hints.json` | Soft hint data |
 
