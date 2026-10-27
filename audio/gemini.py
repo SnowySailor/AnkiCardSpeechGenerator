@@ -4,6 +4,7 @@ import json
 import os
 import re
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -14,6 +15,7 @@ SPEAKER = "Kore"
 MODEL = "gemini-3.8-flash-tts"
 BITRATE = "128k"
 SPEED = 1.0
+DECODE_WORKERS = os.cpu_count() or 4
 
 # Batch bills at 50% of standard and has its own limits (concurrent jobs and
 # enqueued tokens) rather than a per-day request cap. Jobs target a 24h
@@ -136,19 +138,32 @@ class GeminiBatch:
     def results(
         self, status: BatchStatus, keys: list[str]
     ) -> Iterator[tuple[str, bytes | str]]:
-        """Yield (key, mp3 bytes or error text) per output line.
+        """Yield (key, mp3 bytes or error text) per output line, in the order
+        they finish decoding.
 
         Lines carry the request's key; keys (the submission order) is the
         fallback, since output lines are documented to keep input order.
         """
         data = self._client.files.download(file=status.result_file)
         lines = [l for l in data.decode("utf-8").splitlines() if l.strip()]
+        keyed = []
         for i, raw in enumerate(lines):
             line = json.loads(raw)
             key = line.get("key") or (keys[i] if i < len(keys) else None)
-            if key is None:
-                continue
-            try:
-                yield key, _decode(line)
-            except Exception as e:
-                yield key, f"could not decode audio: {e}"
+            if key is not None:
+                keyed.append((key, line))
+
+        # MP3 encoding shells out to ffmpeg, so it parallelizes across threads.
+        # Results are yielded as each finishes, so the caller can save earlier
+        # ones to Anki while later ones are still encoding.
+        executor = ThreadPoolExecutor(max_workers=DECODE_WORKERS)
+        try:
+            futures = {executor.submit(_decode, line): key for key, line in keyed}
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                except Exception as e:
+                    result = f"could not decode audio: {e}"
+                yield futures[future], result
+        finally:
+            executor.shutdown(cancel_futures=True)
