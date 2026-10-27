@@ -1,29 +1,21 @@
 import json
-import os
 import re
 import sys
-import threading
 import time
 from collections import defaultdict
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
-from rich.table import Table
 from rich.text import Text
 
 import replacements as rpl
 import hasher
 from anki import AnkiClient
-from audio.base import AudioGenerator
-
-if TYPE_CHECKING:
-    from audio.gemini_batch import BatchStatus, GeminiBatch
+from audio.gemini import BatchStatus, GeminiBatch
 
 SENTENCE_FIELD = "Expression"
 AUDIO_FIELD = "AI Audio"
@@ -32,15 +24,6 @@ REGENERATE_FIELD = "Regenerate Audio"
 CARD_REPLACEMENTS_FIELD = "Replacements"
 CARD_HINTS_FIELD = "Reading Hints"
 OUTPUT_DIR = Path(__file__).parent / "audio_output"
-
-# In-flight requests turn yellow past SLOW_S (beyond Flex's 1-15 min target)
-# and red past VERY_SLOW_S.
-SLOW_S = 15 * 60
-VERY_SLOW_S = 30 * 60
-# A card in flight this long (wall clock) is abandoned and counted as failed.
-# The generator gives up on its own well before this, so it only fires when its
-# timeouts don't, e.g. the machine slept and the connection died silently.
-STALL_TIMEOUT_S = 45 * 60
 
 # Submitted batch jobs per deck, so a re-run resumes the job instead of paying
 # for the same cards twice.
@@ -168,81 +151,20 @@ def _write_batch_state(state: dict) -> None:
         BATCH_STATE_FILE.unlink(missing_ok=True)
 
 
-@dataclass
-class _InFlight:
-    text: str
-    started: float
-    status: str = "starting"
-    abandoned: bool = False
-
-
-class _Tracker:
-    """In-flight requests: written by worker threads, read by the live display."""
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._items: dict[int, _InFlight] = {}
-
-    def start(self, key: int, text: str) -> None:
-        with self._lock:
-            # Wall clock, so time the machine spends asleep still counts.
-            self._items[key] = _InFlight(text, time.time())
-
-    def update(self, key: int, status: str) -> None:
-        with self._lock:
-            item = self._items.get(key)
-            if item and not item.abandoned:
-                item.status = status
-
-    def abandon(self, key: int) -> None:
-        with self._lock:
-            item = self._items[key]
-            item.abandoned = True
-            item.status = "abandoned, still holding a worker"
-
-    def finish(self, key: int) -> None:
-        with self._lock:
-            self._items.pop(key, None)
-
-    def stuck(self) -> int:
-        """Workers still held by abandoned cards."""
-        with self._lock:
-            return sum(item.abandoned for item in self._items.values())
-
-    def elapsed(self, key: int) -> float | None:
-        with self._lock:
-            item = self._items.get(key)
-            return time.time() - item.started if item else None
-
-    def snapshot(self) -> list[_InFlight]:
-        with self._lock:
-            return sorted(
-                (_InFlight(i.text, i.started, i.status, i.abandoned)
-                 for i in self._items.values()),
-                key=lambda i: i.started,
-            )
-
-
 class Processor:
     def __init__(
         self,
         anki: AnkiClient,
-        generator: AudioGenerator | None,
+        batch: GeminiBatch,
         replacements_data: dict,
         hints_data: dict,
-        workers: int = 1,
         dry_run: bool = False,
-        batch: "GeminiBatch | None" = None,
         limit: int | None = None,
     ):
-        """Pass generator for the live (flex/standard) route, or batch for the
-        batch route."""
         self.anki = anki
-        self.generator = generator
         self.batch = batch
         self.replacements_data = replacements_data
         self.hints_data = hints_data
-        self.workers = workers
         self.limit = limit
         self.dry_run = dry_run
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -259,10 +181,7 @@ class Processor:
                 print(f"  [dry-run] {pc.audio_filename}  {pc.spoken_text[:60]}")
             return
 
-        if self.batch:
-            self._run_batch(deck_name, to_generate)
-        else:
-            self._generate_all(to_generate)
+        self._run_batch(deck_name, to_generate)
 
     def _cards_needing_audio(
         self, deck_name: str, verbose: bool = True
@@ -303,142 +222,6 @@ class Processor:
         )
         if pc.force_regenerate:
             self.anki.update_note_field(pc.note_id, REGENERATE_FIELD, "")
-
-    def _generate_all(self, to_generate: list[ProcessableCard]) -> None:
-        # Generation runs in worker threads; file and AnkiConnect writes stay on
-        # this thread, so each card is saved as soon as its audio arrives.
-        console = Console(highlight=False)
-        tracker = _Tracker()
-        total = len(to_generate)
-        written = failed = abandoned = skipped = 0
-        executor = ThreadPoolExecutor(max_workers=self.workers)
-        pending = {
-            executor.submit(self._generate_one, tracker, key, pc): (key, pc)
-            for key, pc in enumerate(to_generate)
-        }
-
-        def render() -> Panel:
-            now = time.time()
-            table = Table.grid(padding=(0, 2), expand=True)
-            table.add_column(justify="right", no_wrap=True)
-            table.add_column(no_wrap=True)
-            table.add_column(no_wrap=True, overflow="ellipsis", ratio=1)
-            items = tracker.snapshot()
-            for item in items:
-                elapsed = now - item.started
-                time_style = (
-                    "red" if elapsed >= VERY_SLOW_S
-                    else "yellow" if elapsed >= SLOW_S
-                    else ""
-                )
-                status_style = (
-                    "bold red" if item.abandoned
-                    else "dim" if item.status.startswith("waiting")
-                    else "yellow"
-                )
-                table.add_row(
-                    Text(_fmt_elapsed(elapsed), style=time_style),
-                    Text(item.status, style=status_style),
-                    Text(item.text),
-                )
-            finished = written + failed
-            queued = total - finished - len(items)
-            title = (
-                f"In flight {len(items)}/{self.workers} · {written} done · "
-                f"{failed} failed · {max(queued, 0)} queued"
-            )
-            return Panel(table, title=title, title_align="left", border_style="blue")
-
-        def log(prefix: str, *parts) -> None:
-            _log(console, prefix, *parts)
-
-        console.print(
-            f"Generating with {self.workers} workers; results arrive as each finishes."
-        )
-        try:
-            with Live(get_renderable=render, console=console,
-                      refresh_per_second=2, transient=True):
-                while pending:
-                    done, _ = wait(pending, timeout=1, return_when=FIRST_COMPLETED)
-                    for future in done:
-                        _, pc = pending.pop(future)
-                        prefix = f"[{written + failed + 1}/{total}]"
-                        try:
-                            mp3_bytes, elapsed = future.result()
-                        except Exception as e:
-                            log(prefix, ("ERROR", "bold red"),
-                                f" generating audio for {pc.spoken_text[:40]}: {e}")
-                            failed += 1
-                            continue
-
-                        try:
-                            self._save(pc, mp3_bytes)
-                        except Exception as e:
-                            log(prefix, ("ERROR", "bold red"),
-                                f" saving audio for {pc.spoken_text[:40]}: {e}")
-                            failed += 1
-                            continue
-
-                        log(prefix, (pc.audio_filename, "cyan"), "  ",
-                            pc.spoken_text[:60], (f"  {_fmt_elapsed(elapsed)}", "dim"))
-                        written += 1
-
-                    # A worker thread can't be killed, so a stalled card keeps
-                    # its slot; stop waiting on it so the run can still finish.
-                    for future, (key, pc) in list(pending.items()):
-                        elapsed = tracker.elapsed(key)
-                        if elapsed is None or elapsed < STALL_TIMEOUT_S:
-                            continue
-                        del pending[future]
-                        tracker.abandon(key)
-                        log(f"[{written + failed + 1}/{total}]", ("ERROR", "bold red"),
-                            f" no response after {_fmt_elapsed(elapsed)}, abandoned: "
-                            f"{pc.spoken_text[:40]}")
-                        failed += 1
-                        abandoned += 1
-
-                    # With every worker held by an abandoned card, nothing queued
-                    # can ever start; skip the rest rather than wait forever.
-                    if pending and tracker.stuck() >= self.workers:
-                        for future in pending:
-                            future.cancel()
-                        skipped = len(pending)
-                        pending.clear()
-                        console.print(Text.assemble(
-                            ("ERROR", "bold red"),
-                            f" all {self.workers} workers are stuck; skipped "
-                            f"{skipped} queued cards. Re-run to pick them up.",
-                        ))
-        except KeyboardInterrupt:
-            executor.shutdown(wait=False, cancel_futures=True)
-            dropped = total - written - failed
-            console.print(f"\nInterrupted: {written} written, {failed} failed, {dropped} dropped.")
-            # Skip waiting on in-flight requests, which can take up to the
-            # request timeout; everything finished is already in Anki.
-            os._exit(130)
-
-        summary = f"Done: {written} written, {failed} failed"
-        console.print(summary + (f", {skipped} skipped." if skipped else "."))
-        if abandoned:
-            # Abandoned requests still occupy worker threads, which the
-            # interpreter would otherwise wait on at exit.
-            sys.stdout.flush()
-            os._exit(1)
-        executor.shutdown()
-
-    def _generate_one(
-        self, tracker: _Tracker, key: int, pc: ProcessableCard
-    ) -> tuple[bytes, float]:
-        tracker.start(key, pc.spoken_text)
-        started = time.time()
-        try:
-            mp3_bytes = self.generator.generate(
-                pc.spoken_text, pc.prompt,
-                on_status=lambda status: tracker.update(key, status),
-            )
-            return mp3_bytes, time.time() - started
-        finally:
-            tracker.finish(key)
 
     def _run_batch(self, deck_name: str, to_generate: list[ProcessableCard]) -> None:
         console = Console(highlight=False)
@@ -488,7 +271,7 @@ class Processor:
             state.pop(deck_name, None)
             _write_batch_state(state)
 
-    def _wait_for_batch(self, console: Console, entry: dict) -> "BatchStatus":
+    def _wait_for_batch(self, console: Console, entry: dict) -> BatchStatus:
         submitted = datetime.fromisoformat(entry["submitted"])
         status = self.batch.status(entry["job"])
         next_check = time.time() + BATCH_POLL_S
@@ -528,7 +311,7 @@ class Processor:
         return status
 
     def _collect_batch(
-        self, console: Console, deck_name: str, entry: dict, status: "BatchStatus"
+        self, console: Console, deck_name: str, entry: dict, status: BatchStatus
     ) -> bool:
         """Save results into matching cards. Returns True if the job should be
         kept for another collection attempt (some saves to Anki failed)."""

@@ -1,71 +1,40 @@
 import base64
 import io
-import random
+import json
+import os
 import re
-import time
-from typing import Callable
+import tempfile
+from dataclasses import dataclass
+from typing import Iterator
 
-import httpx
 from google import genai
 from pydub import AudioSegment
-
-from .base import AudioGenerator
 
 SPEAKER = "Kore"
 MODEL = "gemini-3.8-flash-tts"
 BITRATE = "128k"
 SPEED = 1.0
 
-# Flex bills at 50% of standard but is best-effort: requests can queue for
-# minutes or be shed with 429/503, so we raise the timeout and retry ourselves.
-SERVICE_TIER = "flex"
-REQUEST_TIMEOUT_S = 900
-# Total budget per card across all attempts, so one card can't hold a worker
-# indefinitely.
-CARD_DEADLINE_S = 30 * 60
-MAX_ATTEMPTS = 5
-BASE_DELAY_S = 5
-RETRYABLE_STATUS = {429, 503}
+# Batch bills at 50% of standard and has its own limits (concurrent jobs and
+# enqueued tokens) rather than a per-day request cap. Jobs target a 24h
+# turnaround and expire if not finished within 48h.
+_STATE_PREFIX = "JOB_STATE_"
+_DONE = {"SUCCEEDED", "PARTIALLY_SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED"}
+_OK = {"SUCCEEDED", "PARTIALLY_SUCCEEDED"}
 
 
-def _retry_after_s(e: Exception) -> float | None:
-    """The wait a 429/503 asked for, if it sent one.
-
-    With the SDK's retries off, we honor it here instead of the SDK sleeping on
-    it uncapped, but only within CARD_DEADLINE_S.
-    """
-    headers = getattr(getattr(e, "response", None), "headers", None) or {}
-    try:
-        if "retry-after-ms" in headers:
-            return float(headers["retry-after-ms"]) / 1000
-        if "retry-after" in headers:
-            return float(headers["retry-after"])
-    except ValueError:
-        pass  # e.g. an HTTP-date retry-after; fall back to our own backoff
-    return None
-
-
-def _fmt_wait(seconds: float) -> str:
-    return f"{seconds / 60:.0f}m" if seconds >= 120 else f"{seconds:.0f}s"
-
-
-def to_mp3(audio_bytes: bytes, mime_type: str = "") -> bytes:
+def to_mp3(pcm: bytes, mime_type: str = "") -> bytes:
     """Convert Gemini TTS audio to MP3.
 
-    Interactions returns WAV (RIFF header, 24 kHz mono 16-bit); generateContent,
-    which the batch route uses, returns raw PCM such as
-    "audio/L16;codec=pcm;rate=24000".
+    generateContent returns raw PCM, e.g. "audio/L16;codec=pcm;rate=24000".
     """
-    if audio_bytes[:4] == b"RIFF":
-        audio = AudioSegment.from_wav(io.BytesIO(audio_bytes))
-    else:
-        rate = re.search(r"rate=(\d+)", mime_type)
-        audio = AudioSegment(
-            data=audio_bytes,
-            sample_width=2,
-            frame_rate=int(rate.group(1)) if rate else 24000,
-            channels=1,
-        )
+    rate = re.search(r"rate=(\d+)", mime_type)
+    audio = AudioSegment(
+        data=pcm,
+        sample_width=2,
+        frame_rate=int(rate.group(1)) if rate else 24000,
+        channels=1,
+    )
     if SPEED != 1.0:
         audio = audio.speedup(playback_speed=SPEED)
     buf = io.BytesIO()
@@ -73,71 +42,113 @@ def to_mp3(audio_bytes: bytes, mime_type: str = "") -> bytes:
     return buf.getvalue()
 
 
-class GeminiAudioGenerator(AudioGenerator):
-    def __init__(self, api_key: str, service_tier: str = SERVICE_TIER):
-        self._service_tier = service_tier
+@dataclass
+class BatchStatus:
+    state: str  # e.g. "RUNNING", without the JOB_STATE_ prefix
+    error: str | None = None
+    result_file: str | None = None
+
+    @property
+    def done(self) -> bool:
+        return self.state in _DONE
+
+    @property
+    def succeeded(self) -> bool:
+        return self.state in _OK
+
+
+def _request(text: str, prompt: str) -> dict:
+    """A generateContent request in REST JSON, as batch input files expect."""
+    # 3.8 TTS speaks the text verbatim; steering goes in speechMetadata.style.
+    part = {"text": text}
+    if prompt:
+        part["speechMetadata"] = {"style": prompt}
+    return {
+        "contents": [{"role": "user", "parts": [part]}],
+        "generationConfig": {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": SPEAKER}}
+            },
+        },
+    }
+
+
+def _get(obj: dict, camel: str, snake: str):
+    # The docs don't pin down the output file's field casing; accept both.
+    return obj.get(camel, obj.get(snake))
+
+
+def _decode(line: dict) -> bytes | str:
+    """MP3 bytes from one output line, or a description of why there are none."""
+    if line.get("error"):
+        error = line["error"]
+        return error.get("message", str(error)) if isinstance(error, dict) else str(error)
+    response = line.get("response") or {}
+    for candidate in response.get("candidates") or []:
+        for part in (candidate.get("content") or {}).get("parts") or []:
+            inline = _get(part, "inlineData", "inline_data")
+            if inline and inline.get("data"):
+                mime = _get(inline, "mimeType", "mime_type") or ""
+                return to_mp3(base64.b64decode(inline["data"]), mime)
+    reasons = [_get(c, "finishReason", "finish_reason") for c in response.get("candidates") or []]
+    return f"no audio in response (finish reason: {', '.join(map(str, reasons)) or 'none'})"
+
+
+class GeminiBatch:
+    def __init__(self, api_key: str):
         self._client = genai.Client(api_key=api_key)
-        # Turn the SDK's own retries off: they run silently and sleep on
-        # retry-after-ms uncapped (it once held every worker for over an hour),
-        # so all retrying happens in _create, where it's reported and bounded by
-        # CARD_DEADLINE_S. HttpRetryOptions can't do this (the client clamps
-        # attempts=0 up to 1) and create() won't take a per-call retries=, so
-        # clear the interactions client's default instead.
-        self._client.interactions.sdk_configuration.retry_config = None
 
-    def generate(
-        self,
-        text: str,
-        prompt: str = "",
-        on_status: Callable[[str], None] | None = None,
-    ) -> bytes:
-        # 3.8 TTS speaks the text verbatim; steering goes in speech_metadata.style.
-        content = {"type": "text", "text": text}
-        if prompt:
-            content["annotations"] = [{"type": "speech_metadata", "style": prompt}]
+    def submit(self, items: dict[str, tuple[str, str]], display_name: str) -> str:
+        """Submit one request per key (text, prompt); returns the job name.
 
-        interaction = self._create(content, on_status or (lambda _: None))
+        Uses an uploaded JSONL file rather than inline requests: inline results
+        come back inside the job object, which gets large with audio.
+        """
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".jsonl", delete=False, encoding="utf-8"
+        ) as f:
+            for key, (text, prompt) in items.items():
+                f.write(json.dumps(
+                    {"key": key, "request": _request(text, prompt)}, ensure_ascii=False
+                ) + "\n")
+            path = f.name
+        try:
+            uploaded = self._client.files.upload(
+                file=path, config={"display_name": display_name, "mime_type": "jsonl"}
+            )
+        finally:
+            os.unlink(path)
+        job = self._client.batches.create(
+            model=MODEL, src=uploaded.name, config={"display_name": display_name}
+        )
+        return job.name
 
-        return to_mp3(base64.b64decode(interaction.output_audio.data))
+    def status(self, job_name: str) -> BatchStatus:
+        job = self._client.batches.get(name=job_name)
+        state = job.state.name if job.state else "UNSPECIFIED"
+        return BatchStatus(
+            state=state.removeprefix(_STATE_PREFIX),
+            error=job.error.message if job.error else None,
+            result_file=job.dest.file_name if job.dest else None,
+        )
 
-    def _create(self, content: dict, on_status: Callable[[str], None]):
-        deadline = time.monotonic() + CARD_DEADLINE_S
-        for attempt in range(MAX_ATTEMPTS):
-            on_status(f"waiting (attempt {attempt + 1}/{MAX_ATTEMPTS})"
-                      if attempt else "waiting")
-            remaining = deadline - time.monotonic()
+    def results(
+        self, status: BatchStatus, keys: list[str]
+    ) -> Iterator[tuple[str, bytes | str]]:
+        """Yield (key, mp3 bytes or error text) per output line.
+
+        Lines carry the request's key; keys (the submission order) is the
+        fallback, since output lines are documented to keep input order.
+        """
+        data = self._client.files.download(file=status.result_file)
+        lines = [l for l in data.decode("utf-8").splitlines() if l.strip()]
+        for i, raw in enumerate(lines):
+            line = json.loads(raw)
+            key = line.get("key") or (keys[i] if i < len(keys) else None)
+            if key is None:
+                continue
             try:
-                return self._client.interactions.create(
-                    model=MODEL,
-                    input=[{"type": "user_input", "content": [content]}],
-                    response_format={"type": "audio"},
-                    generation_config={"speech_config": [{"voice": SPEAKER}]},
-                    service_tier=self._service_tier,
-                    timeout=min(REQUEST_TIMEOUT_S, remaining),
-                )
+                yield key, _decode(line)
             except Exception as e:
-                # The SDK doesn't export its status-code or timeout error
-                # classes publicly; timeouts wrap the original httpx error.
-                status = getattr(e, "status_code", None)
-                timed_out = isinstance(e.__cause__, httpx.TimeoutException)
-                if (status not in RETRYABLE_STATUS and not timed_out) \
-                        or attempt == MAX_ATTEMPTS - 1:
-                    raise
-                requested = _retry_after_s(e)
-                if requested is not None:
-                    delay = requested
-                else:
-                    delay = BASE_DELAY_S * 2**attempt + random.uniform(0, BASE_DELAY_S)
-                if time.monotonic() + delay >= deadline:
-                    if requested is not None:
-                        raise TimeoutError(
-                            f"{status}: Gemini asked to wait {_fmt_wait(requested)}, "
-                            f"past the {CARD_DEADLINE_S // 60} min budget ({e})"
-                        ) from e
-                    raise TimeoutError(
-                        f"gave up after {CARD_DEADLINE_S // 60} min "
-                        f"({attempt + 1} attempts)"
-                    ) from e
-                on_status(f"{status or 'timeout'}, retrying in {_fmt_wait(delay)} "
-                          f"({attempt + 1}/{MAX_ATTEMPTS - 1})")
-                time.sleep(delay)
+                yield key, f"could not decode audio: {e}"

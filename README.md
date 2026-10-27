@@ -33,9 +33,8 @@ For each card in the deck:
    16-character digest → `speech_<hash>.mp3`.
 5. If that hash isn't already in the note's `AI Audio` field (or `Regenerate Audio` is
    set), synthesize, store the media in Anki, and point `AI Audio` at the new file.
-   By default synthesis runs on Gemini's half-price Flex tier, many requests at a time;
-   each card is written back as soon as its audio arrives. `--mode batch` sends them as
-   one Batch API job instead (see [Batch](#batch)).
+   All cards that need audio go to Gemini as one half-price Batch API job, and results
+   are written back when it finishes (see [Batch](#batch)).
 
 ## Replacements vs. hints
 
@@ -115,8 +114,8 @@ The two required ones fail in different, quiet ways if they're wrong:
   sentence and is skipped. You'll see `Skipped N cards with empty sentences.` and nothing
   will be generated.
 - **No `AI Audio`** — audio is synthesized, but AnkiConnect rejects the write-back and
-  each card logs `ERROR updating Anki`. The run continues to the end, so this can burn a
-  lot of API calls before you notice.
+  each card logs `ERROR saving audio`. The whole job is paid for before you notice, though
+  it's kept, so a re-run after fixing the field retries the saves without paying again.
 
 Run `--dry-run` first on any new note type. It catches an `Expression` mismatch for free —
 the skip count will equal the card count and you'll get `0 need audio generation` — but it
@@ -156,11 +155,10 @@ the JSON files so it applies everywhere.
 ### One caveat on deck selection
 
 Cards are found with `deck:"<name>"`, and the tool works per *card*, not per *note*. If
-your note type produces more than one card per note, each note is synthesized once per
-card — same sentence, same hash, same output filename, so the result is correct, but you
-pay for the duplicate TTS calls (they now run in parallel, but the cost is the same). Mining decks are usually one card per note; if yours
-isn't, be aware the card count in the output is higher than the number of distinct
-sentences.
+your note type produces more than one card per note, every card of a note has the same
+sentence and hash, so the batch sends it once and writes the result to each card. The
+card counts in the output are higher than the number of distinct sentences, but you only
+pay for each sentence once.
 
 ## Setup
 
@@ -198,17 +196,12 @@ python main.py "Mining" --dry-run
 
 # Generate and write back
 python main.py "Mining"
-
-# Same, as one half-price batch job (can take hours; avoids Flex's daily cap)
-python main.py "Mining" --mode batch
 ```
 
 | Flag | Effect |
 |---|---|
 | `--dry-run` | List what would be generated; no API calls. |
-| `--mode M` | `flex` (default), `standard` (full price, seconds per card), or `batch`. |
-| `--workers N` | Flex/standard: TTS requests in flight at once (default 10). |
-| `--limit N` | Generate at most N cards this run, e.g. to stay under a daily quota. |
+| `--limit N` | Generate at most N cards this run. |
 
 To force a rebuild of one card, set its `Regenerate Audio` field; to force a rebuild of everything, bump `HASH_VERSION` in `hasher.py`.
 
@@ -217,42 +210,12 @@ and into a local `audio_output/` cache in the project root (git-ignored). The lo
 isn't read back — regeneration is decided from the note's `AI Audio` field — so it's safe
 to delete if it gets large.
 
-### Cost and speed
-
-Requests go to Gemini's **Flex** tier, billed at 50% of the Standard rate. In exchange,
-each request can take minutes rather than seconds, and Google may reject requests (429 or
-503) when it's busy. Throughput comes from concurrency: `--workers` requests are in
-flight at once, so a large backlog still moves quickly even though each card is slow.
-
-- While it runs, a live panel at the bottom of the terminal lists the requests in flight,
-  oldest first, with how long each has waited and its current state (waiting, or a 429/503
-  and its retry countdown). Finished cards scroll by above it. Waits turn yellow after
-  15 minutes and red after 30.
-- Rejected or timed-out requests are retried with exponential backoff (5 attempts,
-  starting at ~5s), within a 30-minute budget per card. If Gemini says how long to wait,
-  that wait is used instead; a wait longer than the budget fails the card immediately
-  instead of sleeping on it. If they still fail, the card is
-  logged as an error and left for the next run — nothing is silently retried at full price.
-- A card with no answer after 45 minutes (for example, the machine slept mid-request) is
-  abandoned and counted as failed so the run can finish. Its thread can't be killed, so it
-  keeps its worker slot until the run ends, and the run exits with status 1. If every
-  worker ends up held this way, the remaining queued cards are skipped for the next run.
-- Flex shares your normal rate limits, which on Tier 1 for this model are 10 requests a
-  minute and 100 a day. If you see many 429s, lower `--workers`; for more than ~100
-  cards, use `--mode batch` or `--limit`.
-- For a quick fix to one or two cards, `--mode standard` returns in seconds at full price.
-- Ctrl-C exits immediately. Every card that already finished is in Anki, so a re-run
-  only picks up the rest. Requests that were still in flight are billed but discarded.
-
-The tier doesn't affect the audio, so switching between modes doesn't change any hashes
-or trigger regeneration.
-
 ### Batch
 
-`--mode batch` submits every card that needs audio as one Batch API job, also billed at
-50% of Standard. Batch has its own limits (concurrent jobs and queued tokens) rather than
-Flex's per-day request cap, so a large backlog goes through in one go. In exchange, Google
-targets finishing within 24 hours (usually much sooner), and a job still unfinished after
+Every card that needs audio is submitted as one Batch API job, billed at 50% of the
+Standard rate. Batch has its own limits (concurrent jobs and queued tokens) rather than a
+per-day request cap, so a large backlog goes through in one go. Google targets finishing
+within 24 hours, but small jobs usually come back in minutes; a job still unfinished after
 48 hours expires.
 
 - Cards that share a sentence (same hash) are sent once and the audio is written to all
@@ -273,23 +236,23 @@ targets finishing within 24 hours (usually much sooner), and a job still unfinis
 | File | Role |
 |---|---|
 | `main.py` | CLI entry point; wires up the client, generator, and processor |
-| `processor.py` | Builds `ProcessableCard`s, decides what needs audio, runs generation in a thread pool (flex/standard) or as a batch job, and writes back as results arrive |
+| `processor.py` | Builds `ProcessableCard`s, decides what needs audio, submits and waits on the batch job, and writes the results back |
 | `anki.py` | `AnkiClient` — AnkiConnect JSON-RPC, with `cardsInfo` batched 500 at a time |
 | `replacements.py` | Loading, `Source` parsing, scope resolution, substitution, prompt building |
 | `hasher.py` | Content hash that decides staleness |
-| `audio/base.py` | `AudioGenerator` ABC: `generate(text, prompt) -> bytes` |
-| `audio/gemini.py` | Gemini API implementation (`gemini-3.8-flash-tts`, Flex tier with retry/backoff); WAV/PCM → MP3 128k via pydub |
-| `audio/gemini_batch.py` | Batch API route: builds the JSONL job, polls it, and decodes results |
+| `audio/gemini.py` | Gemini Batch API (`gemini-3.8-flash-tts`): builds the JSONL job, polls it, decodes results; PCM → MP3 128k via pydub |
 | `replacements.json` | Hard replacement data |
 | `hints.json` | Soft hint data |
 
 Voice and encoding settings (`Kore`, `128k`, speed `1.0`) are duplicated in
-`audio/gemini.py` and `hasher.py` — the generator uses them, the hasher folds them into
+`audio/gemini.py` and `hasher.py` — the batch requests use them, the hasher folds them into
 the digest. **Change them in both places**, otherwise existing cards keep their old audio
 because the hash doesn't move.
 
 ## Adding a TTS provider
 
-Subclass `AudioGenerator`, implement `generate(text, prompt) -> bytes` returning MP3,
+Write a class with the same shape as `GeminiBatch` — `submit(items, display_name)`,
+`status(job)`, and `results(status, keys)` yielding MP3 bytes or an error string per key —
 and construct it in `main.py`. Update `PROVIDER` in `hasher.py` so that switching
-providers invalidates the existing audio.
+providers invalidates the existing audio. (Its current value, `GeminiAudioGenerator`, is
+just a label kept from an earlier version; changing it would regenerate every card.)
