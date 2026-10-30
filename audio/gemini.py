@@ -15,6 +15,8 @@ SPEAKER = "Kore"
 MODEL = "gemini-3.8-flash-tts"
 BITRATE = "128k"
 SPEED = 1.0
+# Batch audio ends with a short burst of static; cut this much off the end.
+TRIM_END_SECONDS = 0.2
 DECODE_WORKERS = os.cpu_count() or 4
 
 # Batch bills at 50% of standard and has its own limits (concurrent jobs and
@@ -37,6 +39,9 @@ def to_mp3(pcm: bytes, mime_type: str = "") -> bytes:
         frame_rate=int(rate.group(1)) if rate else 24000,
         channels=1,
     )
+    trim_ms = round(TRIM_END_SECONDS * 1000)
+    if 0 < trim_ms < len(audio):
+        audio = audio[:-trim_ms]
     if SPEED != 1.0:
         audio = audio.speedup(playback_speed=SPEED)
     buf = io.BytesIO()
